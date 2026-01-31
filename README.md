@@ -1,23 +1,10 @@
 # MediaDL - Universal Media Downloader
 
-Download videos and extract audio from **1800+ websites** - all from browser buttons.
+Download videos and extract audio from **1800+ websites** with a single click.
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Sites](https://img.shields.io/badge/sites-1800+-brightgreen)
-
-## Supported Sites
-
-MediaDL uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) as its backend, supporting:
-
-| Category | Sites |
-|----------|-------|
-| **Video** | YouTube, Vimeo, Dailymotion, TikTok, Twitch, Rumble, Odysee, Bilibili, Streamable |
-| **Social** | Twitter/X, Instagram, Facebook, Reddit, Tumblr |
-| **Audio** | SoundCloud, Bandcamp, Spotify, Mixcloud |
-| **News** | CNN, BBC, NBC, CBS, ABC, Fox, NYT, Washington Post |
-| **Adult** | Most major sites supported |
-| **Other** | [1800+ total sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) |
 
 ## Quick Install (Windows)
 
@@ -25,56 +12,80 @@ MediaDL uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) as its backend, supporti
 irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
 ```
 
+## Supported Sites
+
+MediaDL includes **1,138 explicit domain patterns** covering all [yt-dlp supported sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md):
+
+| Category | Examples |
+|----------|----------|
+| **Video Platforms** | YouTube, Vimeo, Dailymotion, TikTok, Twitch, Rumble, Odysee, Bitchute, Bilibili, PeerTube, Streamable |
+| **Social Media** | Twitter/X, Instagram, Facebook, Reddit, Tumblr, Bluesky, LinkedIn |
+| **Music & Audio** | SoundCloud, Bandcamp, Spotify, Mixcloud, Audiomack, Last.fm |
+| **News & Media** | CNN, BBC, NBC, CBS, ABC, Fox News, NYTimes, Washington Post, Guardian, Reuters |
+| **Sports** | ESPN, NFL, NBA, MLB, NHL, FIFA, Formula 1, UFC |
+| **Education** | Khan Academy, TED, Coursera, Udemy, MIT OpenCourseWare |
+| **Streaming** | Crunchyroll, Twitch VODs, Kick, Floatplane |
+| **Regional** | NHK (Japan), ARD/ZDF (Germany), France.tv, RAI (Italy), SVT (Sweden), NRK (Norway), BBC iPlayer |
+| **Adult** | All major sites supported (PornHub, XVideos, XHamster, etc.) |
+
 ## Features
 
-### Core Features
-- **Download Video** - One-click MP4 downloads (up to 1080p)
-- **Extract Audio** - Convert any video to MP3
+- **One-Click Downloads** - Video (MP4) or Audio (MP3) with a single click
+- **Side Drawer UI** - Minimal, unobtrusive interface that slides out on hover
+- **Universal Support** - Works on 1800+ sites without configuration
+- **SPA Compatible** - Handles YouTube, Twitter, and other single-page apps
+- **Protocol Handler** - Seamless browser-to-desktop integration
 
-### UI
-- **Side Drawer** - Minimal slide-out panel on the right edge
-- **Hover to Expand** - Just hover over the lip to reveal buttons
-- **Auto-Hide** - Collapses when you move away
+## How It Works
 
-### Smart Features
-- **Site Detection** - Automatically recognizes supported sites
-- **SPA Navigation** - Handles YouTube/Twitter single-page navigation
-- **Persistent Settings** - Your preferences save across sessions
-- **Auto-Retry** - Failed downloads automatically retry
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Browser       │     │   Windows       │     │   Output        │
+│                 │     │                 │     │                 │
+│  MediaDL        │────>│  ytdl://        │────>│  Video.mp4      │
+│  Userscript     │     │  Protocol       │     │  Audio.mp3      │
+│                 │     │  Handler        │     │                 │
+│  [Video] [MP3]  │     │  (yt-dlp)       │     │  ~/Videos/      │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+1. Visit any supported site
+2. Hover over the green lip on the right edge
+3. Click **Video** or **MP3**
+4. File downloads to your Videos folder
 
 ## Screenshots
 
-### Side Drawer
-A minimal slide-out drawer on the right edge of the screen:
+### Side Drawer Interface
 
 ```
-                                        |  <- Thin green lip (always visible)
-                                        |
-    [hover over lip]  ─────────────────┐|
-                      │ [Video]        │|
-                      │ [MP3]          │|
-                      └────────────────┘|
-    
-    [hover away] ───────────────────────|  <- Slides back, only lip visible
+                                          │  ← Green lip (always visible)
+                                          │
+    [hover]  ────────────────────────────┐│
+             │  ┌─────────┐              ││
+             │  │  Video  │  ← Green     ││
+             │  └─────────┘              ││
+             │  ┌─────────┐              ││
+             │  │   MP3   │  ← Purple    ││
+             │  └─────────┘              ││
+             └───────────────────────────┘│
+                                          │
+    [mouse away]  ────────────────────────│  ← Collapses automatically
 ```
-
-- Hover over the lip to expand
-- Click a button to download
-- Move mouse away to collapse
 
 ## Installation
 
-### Option 1: Automatic (Recommended)
+### Automatic (Recommended)
 
 1. Open PowerShell as Administrator
-2. Run the one-liner:
+2. Run:
    ```powershell
    irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
    ```
 3. Follow the GUI installer
 4. Install the userscript when prompted
 
-### Option 2: Manual
+### Manual
 
 1. **Install a userscript manager:**
    - [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Firefox, Edge)
@@ -84,45 +95,15 @@ A minimal slide-out drawer on the right edge of the screen:
    
    **[Click to Install MediaDL](https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js)**
 
-3. **Install dependencies:**
+3. **Install backend dependencies:**
    - [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases)
    - [ffmpeg](https://ffmpeg.org/download.html)
 
-4. **Register protocol handlers** (see Protocol Handlers section)
+4. **Register protocol handler** (see below)
 
-## How It Works
+## Protocol Handler
 
-```
-Browser                    Windows                     Output
-+-----------------+       +-----------------+        +----------+
-|  MediaDL        |       |  Protocol       |        |          |
-|  Userscript     |------>|  Handler        |------> |  Video/  |
-|                 |       |  (PowerShell)   |        |  Audio   |
-|  Detects site   |       |                 |        |  Files   |
-|  Shows buttons  |       |  Calls yt-dlp   |        |          |
-|  Sends URL      |       |  with URL       |        |          |
-+-----------------+       +-----------------+        +----------+
-        |                         |
-        |  ytdl://URL             |  yt-dlp -f best URL
-```
-
-1. **Userscript detects** you're on a supported video page
-2. **Buttons appear** (native or floating panel)
-3. **Click triggers** a custom protocol URL (`ytdl://`)
-4. **Windows launches** the protocol handler script
-5. **yt-dlp downloads** the media to your Downloads folder
-
-## Protocol Handlers
-
-The installer creates this protocol handler:
-
-| Protocol | Purpose | Handler |
-|----------|---------|---------|
-| `ytdl://` | Download video/audio | `ytdl-handler.ps1` |
-
-### Manual Protocol Setup
-
-If not using the installer, create this registry entry:
+The installer creates a `ytdl://` protocol handler. For manual setup:
 
 ```reg
 Windows Registry Editor Version 5.00
@@ -135,9 +116,31 @@ Windows Registry Editor Version 5.00
 @="powershell.exe -ExecutionPolicy Bypass -File \"C:\\Path\\To\\ytdl-handler.ps1\" \"%1\""
 ```
 
-## Adding New Sites
+## File Locations
 
-The userscript uses a simple site configuration system. To add a new site:
+| Item | Path |
+|------|------|
+| Installation | `%LOCALAPPDATA%\YTYT-Downloader\` |
+| Downloads | `%USERPROFILE%\Videos\YouTube\` |
+| yt-dlp | `%LOCALAPPDATA%\YTYT-Downloader\yt-dlp.exe` |
+| ffmpeg | `%LOCALAPPDATA%\YTYT-Downloader\ffmpeg.exe` |
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Drawer doesn't appear | Refresh page; site may not be on a video page |
+| "Protocol not recognized" | Re-run installer or check registry entries |
+| Download fails | Run `yt-dlp --version` to verify installation |
+| Site not working | Update yt-dlp: `yt-dlp -U` |
+
+### Debug
+
+Open browser console (F12) and look for `MediaDL:` log messages.
+
+## Adding Custom Sites
+
+The userscript already matches 1,138 domains. For custom site behavior:
 
 ```javascript
 // In SITE_CONFIGS object:
@@ -149,49 +152,15 @@ The userscript uses a simple site configuration system. To add a new site:
 }
 ```
 
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Drawer doesn't appear | Refresh page, check if URL matches a video page |
-| "Protocol not recognized" | Re-run installer or check registry entries |
-| Download fails | Check yt-dlp is installed: `yt-dlp --version` |
-| Site not supported | Check [yt-dlp supported sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) |
-
-### Debug Mode
-
-Open browser console (F12) and check for `MediaDL` log messages.
-
-## File Locations
-
-| Item | Path |
-|------|------|
-| Installation | `%LOCALAPPDATA%\YTYT-Downloader\` |
-| Downloads | `%USERPROFILE%\Videos\YouTube\` |
-| yt-dlp | `%LOCALAPPDATA%\YTYT-Downloader\yt-dlp.exe` |
-| ffmpeg | `%LOCALAPPDATA%\YTYT-Downloader\ffmpeg.exe` |
-| Handlers | `%LOCALAPPDATA%\YTYT-Downloader\*.ps1` |
-
 ## Uninstalling
 
-1. Delete installation folder: `%LOCALAPPDATA%\YTYT-Downloader`
-2. Remove registry key:
-   - `HKCU:\Software\Classes\ytdl`
+1. Delete: `%LOCALAPPDATA%\YTYT-Downloader`
+2. Remove registry: `HKCU:\Software\Classes\ytdl`
 3. Remove userscript from Tampermonkey/Violentmonkey
-4. Delete desktop shortcut if created
-
-## Contributing
-
-Contributions welcome! Areas of interest:
-
-- [ ] Add more site-specific integrations
-- [ ] macOS/Linux support
-- [ ] Playlist support
-- [ ] Quality selection UI
 
 ## Credits
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - The powerful download engine
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Download engine (1800+ sites)
 - [ffmpeg](https://ffmpeg.org/) - Audio/video processing
 
 ## License
