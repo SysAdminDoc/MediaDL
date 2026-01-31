@@ -2,39 +2,44 @@
 
 Download videos and extract audio from **1800+ websites** with a single click.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Sites](https://img.shields.io/badge/sites-1800+-brightgreen)
+[![Version](https://img.shields.io/badge/version-1.0.0-00b894)](https://github.com/SysAdminDoc/MediaDL/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![yt-dlp](https://img.shields.io/badge/powered%20by-yt--dlp-red)](https://github.com/yt-dlp/yt-dlp)
+[![Sites](https://img.shields.io/badge/supported%20sites-1800+-brightgreen)](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
+
+---
 
 ## Quick Install (Windows)
 
 ```powershell
-irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
+irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/Install-MediaDL.ps1 | iex
 ```
 
-## Supported Sites
-
-MediaDL includes **1,138 explicit domain patterns** covering all [yt-dlp supported sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md):
-
-| Category | Examples |
-|----------|----------|
-| **Video Platforms** | YouTube, Vimeo, Dailymotion, TikTok, Twitch, Rumble, Odysee, Bitchute, Bilibili, PeerTube, Streamable |
-| **Social Media** | Twitter/X, Instagram, Facebook, Reddit, Tumblr, Bluesky, LinkedIn |
-| **Music & Audio** | SoundCloud, Bandcamp, Spotify, Mixcloud, Audiomack, Last.fm |
-| **News & Media** | CNN, BBC, NBC, CBS, ABC, Fox News, NYTimes, Washington Post, Guardian, Reuters |
-| **Sports** | ESPN, NFL, NBA, MLB, NHL, FIFA, Formula 1, UFC |
-| **Education** | Khan Academy, TED, Coursera, Udemy, MIT OpenCourseWare |
-| **Streaming** | Crunchyroll, Twitch VODs, Kick, Floatplane |
-| **Regional** | NHK (Japan), ARD/ZDF (Germany), France.tv, RAI (Italy), SVT (Sweden), NRK (Norway), BBC iPlayer |
-| **Adult** | All major sites supported (PornHub, XVideos, XHamster, etc.) |
+---
 
 ## Features
 
 - **One-Click Downloads** - Video (MP4) or Audio (MP3) with a single click
-- **Side Drawer UI** - Minimal, unobtrusive interface that slides out on hover
-- **Universal Support** - Works on 1800+ sites without configuration
-- **SPA Compatible** - Handles YouTube, Twitter, and other single-page apps
-- **Protocol Handler** - Seamless browser-to-desktop integration
+- **Universal Support** - Works on 1800+ sites via yt-dlp
+- **Side Drawer UI** - Minimal, unobtrusive interface on the right edge
+- **SPA Compatible** - Handles YouTube, Twitter, TikTok and other single-page apps
+- **Auto-Updates** - Userscript updates automatically via Tampermonkey/Violentmonkey
+
+## Supported Sites
+
+MediaDL supports all [yt-dlp extractors](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) including:
+
+| Category | Examples |
+|----------|----------|
+| **Video** | YouTube, Vimeo, Dailymotion, TikTok, Twitch, Rumble, Odysee, Bitchute, Bilibili |
+| **Social** | Twitter/X, Instagram, Facebook, Reddit, Tumblr, LinkedIn |
+| **Music** | SoundCloud, Bandcamp, Spotify, Mixcloud, Audiomack |
+| **News** | CNN, BBC, NBC, CBS, ABC, Fox News, NYTimes, Washington Post |
+| **Sports** | ESPN, NFL, NBA, MLB, NHL, FIFA, Formula 1 |
+| **Education** | Khan Academy, TED, Coursera, Udemy, MIT OpenCourseWare |
+| **Adult** | All major sites supported |
+
+---
 
 ## How It Works
 
@@ -49,29 +54,29 @@ MediaDL includes **1,138 explicit domain patterns** covering all [yt-dlp support
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-1. Visit any supported site
-2. Hover over the green lip on the right edge
+1. Visit any supported site with video/audio content
+2. Hover over the **green lip** on the right edge of your screen
 3. Click **Video** or **MP3**
 4. File downloads to your Videos folder
 
-## Screenshots
-
-### Side Drawer Interface
+## User Interface
 
 ```
-                                          │  ← Green lip (always visible)
+                                          │  <- Green lip (always visible)
                                           │
     [hover]  ────────────────────────────┐│
              │  ┌─────────┐              ││
-             │  │  Video  │  ← Green     ││
+             │  │  Video  │  <- Green    ││
              │  └─────────┘              ││
              │  ┌─────────┐              ││
-             │  │   MP3   │  ← Purple    ││
+             │  │   MP3   │  <- Purple   ││
              │  └─────────┘              ││
              └───────────────────────────┘│
                                           │
-    [mouse away]  ────────────────────────│  ← Collapses automatically
+    [mouse away]  ────────────────────────│  <- Collapses automatically
 ```
+
+---
 
 ## Installation
 
@@ -80,12 +85,12 @@ MediaDL includes **1,138 explicit domain patterns** covering all [yt-dlp support
 1. Open PowerShell as Administrator
 2. Run:
    ```powershell
-   irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
+   irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/Install-MediaDL.ps1 | iex
    ```
-3. Follow the GUI installer
+3. Follow the setup wizard
 4. Install the userscript when prompted
 
-### Manual
+### Manual Installation
 
 1. **Install a userscript manager:**
    - [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Firefox, Edge)
@@ -93,17 +98,19 @@ MediaDL includes **1,138 explicit domain patterns** covering all [yt-dlp support
 
 2. **Install the userscript:**
    
-   **[Click to Install MediaDL](https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js)**
+   [![Install MediaDL](https://img.shields.io/badge/Install-MediaDL-00b894?style=for-the-badge)](https://github.com/SysAdminDoc/MediaDL/raw/main/MediaDL.user.js)
 
-3. **Install backend dependencies:**
-   - [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases)
-   - [ffmpeg](https://ffmpeg.org/download.html)
+3. **Install backend tools:**
+   - [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) - Download engine
+   - [ffmpeg](https://ffmpeg.org/download.html) - Audio/video processing
 
-4. **Register protocol handler** (see below)
+4. **Register protocol handler** - See [Protocol Handler](#protocol-handler) section
+
+---
 
 ## Protocol Handler
 
-The installer creates a `ytdl://` protocol handler. For manual setup:
+The installer registers a `ytdl://` protocol handler. For manual setup:
 
 ```reg
 Windows Registry Editor Version 5.00
@@ -113,59 +120,76 @@ Windows Registry Editor Version 5.00
 "URL Protocol"=""
 
 [HKEY_CURRENT_USER\Software\Classes\ytdl\shell\open\command]
-@="powershell.exe -ExecutionPolicy Bypass -File \"C:\\Path\\To\\ytdl-handler.ps1\" \"%1\""
+@="powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \"C:\\Path\\To\\ytdl-handler.ps1\" \"%1\""
 ```
 
 ## File Locations
 
 | Item | Path |
 |------|------|
-| Installation | `%LOCALAPPDATA%\YTYT-Downloader\` |
-| Downloads | `%USERPROFILE%\Videos\YouTube\` |
-| yt-dlp | `%LOCALAPPDATA%\YTYT-Downloader\yt-dlp.exe` |
-| ffmpeg | `%LOCALAPPDATA%\YTYT-Downloader\ffmpeg.exe` |
+| Installation | `%LOCALAPPDATA%\MediaDL\` |
+| Downloads | `%USERPROFILE%\Videos\MediaDL\` |
+| yt-dlp | `%LOCALAPPDATA%\MediaDL\yt-dlp.exe` |
+| ffmpeg | `%LOCALAPPDATA%\MediaDL\ffmpeg.exe` |
+| Config | `%LOCALAPPDATA%\MediaDL\config.json` |
+
+---
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Drawer doesn't appear | Refresh page; site may not be on a video page |
-| "Protocol not recognized" | Re-run installer or check registry entries |
-| Download fails | Run `yt-dlp --version` to verify installation |
-| Site not working | Update yt-dlp: `yt-dlp -U` |
+| Drawer doesn't appear | Refresh the page; ensure you're on a video page |
+| "Protocol not recognized" | Re-run the installer or check registry entries |
+| Download fails | Update yt-dlp: Open PowerShell and run `yt-dlp -U` |
+| Site not working | Check if the site is [supported by yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) |
 
-### Debug
+### Debug Mode
 
 Open browser console (F12) and look for `MediaDL:` log messages.
 
-## Adding Custom Sites
-
-The userscript already matches 1,138 domains. For custom site behavior:
-
-```javascript
-// In SITE_CONFIGS object:
-'example.com': {
-    name: 'Example Site',
-    urlPattern: /example\.com\/video\/\d+/,
-    getVideoUrl: () => location.href,
-    getVideoTitle: () => document.querySelector('h1')?.textContent || 'video'
-}
-```
+---
 
 ## Uninstalling
 
-1. Delete: `%LOCALAPPDATA%\YTYT-Downloader`
-2. Remove registry: `HKCU:\Software\Classes\ytdl`
+**Via Installer:** Run the installer again and click "Uninstall"
+
+**Manual:**
+1. Delete: `%LOCALAPPDATA%\MediaDL`
+2. Remove registry key: `HKCU:\Software\Classes\ytdl`
 3. Remove userscript from Tampermonkey/Violentmonkey
+
+---
+
+## Changelog
+
+### v1.0.0 (Initial Release)
+- Side drawer UI with hover-to-expand
+- Video (MP4) and Audio (MP3) download buttons
+- 1,138 explicit site patterns
+- Windows installer with 3-step wizard
+- Protocol handler for browser-to-desktop integration
+- Auto-update support for userscript
+
+---
+
+## Contributing
+
+Contributions welcome! Ideas for improvement:
+
+- [ ] macOS/Linux support
+- [ ] Quality selection UI
+- [ ] Playlist support
+- [ ] Download queue management
 
 ## Credits
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Download engine (1800+ sites)
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - The powerful download engine
 - [ffmpeg](https://ffmpeg.org/) - Audio/video processing
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+[MIT License](LICENSE) - feel free to use, modify, and distribute.
 
 ---
 

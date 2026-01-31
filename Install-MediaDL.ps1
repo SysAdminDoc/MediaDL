@@ -36,7 +36,7 @@ $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\MediaDL"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
-$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js"
+$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/main/MediaDL.user.js"
 
 # Browser icon URLs (using YTYT-Downloader repo for shared assets)
 $script:BrowserIcons = @{
