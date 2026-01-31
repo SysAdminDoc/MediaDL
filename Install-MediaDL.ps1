@@ -38,7 +38,7 @@ $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt
 $script:FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
-$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/main/src/MediaDL.user.js"
+$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js"
 
 # ============================================
 # ASSEMBLIES

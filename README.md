@@ -22,7 +22,7 @@ MediaDL uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) as its backend, supporti
 ## Quick Install (Windows)
 
 ```powershell
-irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/src/Install-MediaDL.ps1 | iex
+irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
 ```
 
 ## Features
@@ -31,11 +31,10 @@ irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/src/Install-Media
 - **Download Video** - One-click MP4 downloads (up to 1080p)
 - **Extract Audio** - Convert any video to MP3
 
-### UI Modes
-- **Slide-Out Menu** - Compact button expands on hover/click
-- **Native Integration** - Blends into YouTube's interface
-- **Floating Panel** - Expandable widget for all other sites
-- **Shorts Support** - Works on YouTube Shorts, TikTok, Instagram Reels
+### UI
+- **Side Drawer** - Minimal slide-out panel on the right edge
+- **Hover to Expand** - Just hover over the lip to reveal buttons
+- **Auto-Hide** - Collapses when you move away
 
 ### Smart Features
 - **Site Detection** - Automatically recognizes supported sites
@@ -45,44 +44,23 @@ irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/src/Install-Media
 
 ## Screenshots
 
-### YouTube Integration
-Slide-out menu in YouTube's action bar - hover or click to expand:
+### Side Drawer
+A minimal slide-out drawer on the right edge of the screen:
 
 ```
-  [DL]  <-- Collapsed (just a small lip)
-   |
-   v (hover/click)
-
-[DL][Video][MP3][Settings]  <-- Expanded
+                                        |  <- Thin green lip (always visible)
+                                        |
+    [hover over lip]  ─────────────────┐|
+                      │ [Video]        │|
+                      │ [MP3]          │|
+                      └────────────────┘|
+    
+    [hover away] ───────────────────────|  <- Slides back, only lip visible
 ```
 
-### YouTube Shorts
-Vertical slide-out on Shorts:
-
-```
-  (DL)   <-- Collapsed
-   |
-   v (hover/click)
-  
-  (DL)
-  (Video)  <-- Expanded
-  (MP3)
-```
-
-### Floating Panel (Other Sites)
-Expandable download widget for non-YouTube sites:
-
-```
-  [DL]  <-- Hover or click to expand
-   |
-   v
-+------------------+
-| TWITTER          |
-| [Download Video] |
-| [Extract MP3]    |
-| [Settings]       |
-+------------------+
-```
+- Hover over the lip to expand
+- Click a button to download
+- Move mouse away to collapse
 
 ## Installation
 
@@ -91,7 +69,7 @@ Expandable download widget for non-YouTube sites:
 1. Open PowerShell as Administrator
 2. Run the one-liner:
    ```powershell
-   irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/src/Install-MediaDL.ps1 | iex
+   irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
    ```
 3. Follow the GUI installer
 4. Install the userscript when prompted
@@ -104,7 +82,7 @@ Expandable download widget for non-YouTube sites:
 
 2. **Install the userscript:**
    
-   **[Click to Install MediaDL](https://github.com/SysAdminDoc/MediaDL/raw/main/src/MediaDL.user.js)**
+   **[Click to Install MediaDL](https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js)**
 
 3. **Install dependencies:**
    - [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases)
@@ -157,20 +135,9 @@ Windows Registry Editor Version 5.00
 @="powershell.exe -ExecutionPolicy Bypass -File \"C:\\Path\\To\\ytdl-handler.ps1\" \"%1\""
 ```
 
-## Settings
-
-Click the gear icon to configure:
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Show Video Button | Download as MP4 | On |
-| Show Audio Button | Extract as MP3 | On |
-
-Settings persist across browser sessions.
-
 ## Adding New Sites
 
-The userscript uses a modular site configuration system. To add a new site:
+The userscript uses a simple site configuration system. To add a new site:
 
 ```javascript
 // In SITE_CONFIGS object:
@@ -178,14 +145,7 @@ The userscript uses a modular site configuration system. To add a new site:
     name: 'Example Site',
     urlPattern: /example\.com\/video\/\d+/,
     getVideoUrl: () => location.href,
-    getVideoTitle: () => document.querySelector('h1')?.textContent || 'video',
-    getThumbnail: () => document.querySelector('meta[property="og:image"]')?.content,
-    buttonContainer: () => {
-        const el = document.querySelector('.video-actions');
-        return el ? { el, method: 'append', type: 'actions' } : null;
-    },
-    buttonStyle: 'example',
-    useFloating: false  // true = use floating panel, false = inject buttons
+    getVideoTitle: () => document.querySelector('h1')?.textContent || 'video'
 }
 ```
 
@@ -193,7 +153,7 @@ The userscript uses a modular site configuration system. To add a new site:
 
 | Issue | Solution |
 |-------|----------|
-| Buttons don't appear | Refresh page, check if URL matches a video page |
+| Drawer doesn't appear | Refresh page, check if URL matches a video page |
 | "Protocol not recognized" | Re-run installer or check registry entries |
 | Download fails | Check yt-dlp is installed: `yt-dlp --version` |
 | Site not supported | Check [yt-dlp supported sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) |
