@@ -1,16 +1,15 @@
 <#
 .SYNOPSIS
-    MediaDL Installer - Universal Media Downloader Setup
+    MediaDL Installer - Professional setup wizard for universal media downloading
 .DESCRIPTION
     Installs and configures:
     - yt-dlp (auto-download)
     - ffmpeg (auto-download)
-    - Download protocol handler (ytdl://) with progress UI
-    - Userscript for 1800+ site integration
+    - Download protocol handler (ytdl://)
+    - Userscript for 1800+ site support
 .NOTES
     Author: SysAdminDoc
     Version: 1.0.0
-    Based on YTYT-Downloader v2.0.0
     Repository: https://github.com/SysAdminDoc/MediaDL
 #>
 
@@ -33,12 +32,43 @@ $consolePtr = [Console.Window]::GetConsoleWindow()
 # ============================================
 $script:AppName = "MediaDL"
 $script:AppVersion = "1.0.0"
-$script:InstallPath = "$env:LOCALAPPDATA\YTYT-Downloader"
+$script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-$script:FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-$script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
+$script:DefaultDownloadPath = "$env:USERPROFILE\Videos\MediaDL"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
 $script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js"
+
+# Browser icon URLs
+$script:BrowserIcons = @{
+    Chrome  = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/google-chrome.png"
+    Firefox = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/mozilla-firefox.png"
+    Edge    = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/microsoft-edge.png"
+    Safari  = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/apple-safari.png"
+    Opera   = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/opera.png"
+}
+
+# Userscript manager links by browser
+$script:UserscriptManagers = @{
+    Chrome = @{
+        Tampermonkey = "https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo"
+        Violentmonkey = "https://chrome.google.com/webstore/detail/violent-monkey/jinjaccalgkegednnccohejagnlnfdag"
+    }
+    Firefox = @{
+        Tampermonkey = "https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/"
+        Greasemonkey = "https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/"
+        Violentmonkey = "https://addons.mozilla.org/firefox/addon/violentmonkey/"
+    }
+    Edge = @{
+        Tampermonkey = "https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd"
+        Violentmonkey = "https://microsoftedge.microsoft.com/addons/detail/eeagobfjdenkkddmbclomhiblgggliao"
+    }
+    Safari = @{
+        Tampermonkey = "https://apps.apple.com/us/app/tampermonkey/id6738342400"
+    }
+    Opera = @{
+        Tampermonkey = "https://addons.opera.com/en/extensions/details/tampermonkey-beta/"
+    }
+}
 
 # ============================================
 # ASSEMBLIES
@@ -52,16 +82,24 @@ Add-Type -AssemblyName System.Drawing
 # ============================================
 # HELPER FUNCTIONS
 # ============================================
-function Download-File {
-    param([string]$Url, [string]$OutPath)
+function Get-BitmapImageFromUrl {
+    param([string]$Url)
     try {
         $webClient = New-Object System.Net.WebClient
         $webClient.Headers.Add("User-Agent", "Mozilla/5.0")
-        $webClient.DownloadFile($Url, $OutPath)
+        $imageData = $webClient.DownloadData($Url)
         $webClient.Dispose()
-        return $true
+        
+        $stream = New-Object System.IO.MemoryStream(,$imageData)
+        $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
+        $bitmap.BeginInit()
+        $bitmap.StreamSource = $stream
+        $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $bitmap.EndInit()
+        $bitmap.Freeze()
+        return $bitmap
     } catch {
-        return $false
+        return $null
     }
 }
 
@@ -79,47 +117,17 @@ function Uninstall-Previous {
         Get-Process -Name $_ -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Milliseconds 500
-    
-    # Remove protocol handlers (will be re-registered)
-    @("ytvlc", "ytvlcq", "ytdl", "ytmpv", "ytdlplay") | ForEach-Object {
-        Remove-Item -Path "HKCU:\Software\Classes\$_" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "HKCU:\Software\Classes\ytdl" -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path $script:InstallPath) {
+        Remove-Item -Path $script:InstallPath -Recurse -Force -ErrorAction SilentlyContinue
     }
-    
-    # Only remove old MediaDL-specific directory if it exists (not the shared YTYT directory)
-    if (Test-Path "$env:LOCALAPPDATA\MediaDL") {
-        Remove-Item -Path "$env:LOCALAPPDATA\MediaDL" -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    
-    # Remove desktop shortcuts
-    @("MediaDL Downloads.lnk", "YouTube Download.lnk") | ForEach-Object {
-        $shortcutPath = "$env:USERPROFILE\Desktop\$_"
-        if (Test-Path $shortcutPath) {
-            Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
-        }
+    $shortcutPath = "$env:USERPROFILE\Desktop\MediaDL Download.lnk"
+    if (Test-Path $shortcutPath) {
+        Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
     }
 }
 
 Uninstall-Previous
-
-# Check for existing yt-dlp
-$ytdlpExists = $null
-@("$script:InstallPath\yt-dlp.exe", "$env:LOCALAPPDATA\MediaDL\yt-dlp.exe", "$env:LOCALAPPDATA\yt-dlp\yt-dlp.exe") | ForEach-Object {
-    if (Test-Path $_) { $ytdlpExists = $_ }
-}
-if (!$ytdlpExists) {
-    $ytdlpCmd = Get-Command yt-dlp -ErrorAction SilentlyContinue
-    if ($ytdlpCmd) { $ytdlpExists = $ytdlpCmd.Source }
-}
-
-# Check for existing ffmpeg
-$ffmpegExists = $null
-@("$script:InstallPath\ffmpeg.exe", "$env:LOCALAPPDATA\MediaDL\ffmpeg.exe") | ForEach-Object {
-    if (Test-Path $_) { $ffmpegExists = $_ }
-}
-if (!$ffmpegExists) {
-    $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
-    if ($ffmpegCmd) { $ffmpegExists = $ffmpegCmd.Source }
-}
 
 # ============================================
 # XAML GUI DEFINITION
@@ -127,23 +135,27 @@ if (!$ffmpegExists) {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MediaDL Setup" Height="720" Width="550"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        Background="#0f0f0f">
+        Title="MediaDL Setup" Height="820" Width="900"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize"
+        Background="#0a0a0a">
     <Window.Resources>
-        <SolidColorBrush x:Key="BgDark" Color="#0f0f0f"/>
-        <SolidColorBrush x:Key="BgCard" Color="#1a1a1a"/>
+        <SolidColorBrush x:Key="BgDark" Color="#0a0a0a"/>
+        <SolidColorBrush x:Key="BgCard" Color="#141414"/>
+        <SolidColorBrush x:Key="BgHover" Color="#1f1f1f"/>
         <SolidColorBrush x:Key="Border" Color="#2a2a2a"/>
         <SolidColorBrush x:Key="TextPrimary" Color="#fafafa"/>
         <SolidColorBrush x:Key="TextSecondary" Color="#a1a1aa"/>
+        <SolidColorBrush x:Key="TextMuted" Color="#71717a"/>
         <SolidColorBrush x:Key="AccentGreen" Color="#00b894"/>
         <SolidColorBrush x:Key="AccentGreenHover" Color="#00a085"/>
+        <SolidColorBrush x:Key="AccentPurple" Color="#6c5ce7"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#ef4444"/>
         
-        <Style x:Key="PrimaryButton" TargetType="Button">
+        <Style x:Key="BaseButton" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource AccentGreen}"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Foreground" Value="#0a0a0a"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="24,14"/>
+            <Setter Property="Padding" Value="24,12"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
@@ -167,20 +179,15 @@ if (!$ffmpegExists) {
             </Style.Triggers>
         </Style>
         
-        <Style x:Key="SecondaryButton" TargetType="Button">
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
             <Setter Property="Background" Value="{StaticResource BgCard}"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
             <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="20,12"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                     </ControlTemplate>
@@ -188,17 +195,42 @@ if (!$ffmpegExists) {
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#252525"/>
+                    <Setter Property="Background" Value="{StaticResource BgHover}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
         
-        <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Margin" Value="0,6,0,0"/>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+            <Setter Property="Background" Value="{StaticResource AccentRed}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#dc2626"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <Style x:Key="BrowserButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Width" Value="72"/>
+            <Setter Property="Height" Value="72"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="2" CornerRadius="12" Padding="12">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource AccentGreen}"/>
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource BgHover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         
         <Style TargetType="TextBox">
@@ -206,627 +238,521 @@ if (!$ffmpegExists) {
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
             <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Padding" Value="12,10"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentGreen}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal">
+                            <Border x:Name="checkbox" Width="20" Height="20" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="2" CornerRadius="4" VerticalAlignment="Center">
+                                <Path x:Name="checkmark" Data="M3,7 L6,10 L11,4" Stroke="{StaticResource AccentGreen}" StrokeThickness="2" Visibility="Collapsed" Margin="2"/>
+                            </Border>
+                            <ContentPresenter Margin="10,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="checkmark" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="checkbox" Property="BorderBrush" Value="{StaticResource AccentGreen}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="checkbox" Property="BorderBrush" Value="{StaticResource AccentGreen}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
     
-    <Grid Margin="30">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         
         <!-- Header -->
-        <StackPanel Grid.Row="0" Margin="0,0,0,25">
-            <TextBlock Text="MediaDL" FontSize="36" FontWeight="Bold" Foreground="#00b894"/>
-            <TextBlock Text="Universal Media Downloader" FontSize="14" Foreground="#888" Margin="0,5,0,0"/>
-            <TextBlock Text="Download from YouTube, Twitter, TikTok, and 1800+ sites" FontSize="12" Foreground="#666" Margin="0,3,0,0"/>
-        </StackPanel>
-        
-        <!-- Settings Panel -->
-        <StackPanel Grid.Row="1" x:Name="OptionsPanel">
-            <!-- Download Path -->
-            <Border Background="#1a1a1a" CornerRadius="10" Padding="18" Margin="0,0,0,12">
-                <StackPanel>
-                    <TextBlock Text="Download Location" FontSize="13" FontWeight="SemiBold" Foreground="White" Margin="0,0,0,10"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="txtDownloadPath" Grid.Column="0"/>
-                        <Button x:Name="btnBrowse" Grid.Column="1" Content="Browse" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Padding="16,8"/>
-                    </Grid>
+        <Border Grid.Row="0" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+            <Grid Margin="32,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Width="60" Height="60" CornerRadius="12" Background="{StaticResource AccentGreen}" Margin="0,0,20,0">
+                    <TextBlock Text="M" FontSize="32" FontWeight="Bold" Foreground="#0a0a0a" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="MediaDL Setup Wizard" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" FontFamily="Segoe UI"/>
+                    <TextBlock Text="Download videos and audio from 1800+ sites" FontSize="14" Foreground="{StaticResource TextSecondary}" FontFamily="Segoe UI" Margin="0,4,0,0"/>
                 </StackPanel>
-            </Border>
-            
-            <!-- Components -->
-            <Border Background="#1a1a1a" CornerRadius="10" Padding="18" Margin="0,0,0,12">
-                <StackPanel>
-                    <TextBlock Text="Components" FontSize="13" FontWeight="SemiBold" Foreground="White" Margin="0,0,0,10"/>
-                    <CheckBox x:Name="chkYtDlp" Content="Install/Update yt-dlp (required)" IsChecked="True" IsEnabled="False"/>
-                    <CheckBox x:Name="chkFfmpeg" Content="Install ffmpeg (required for MP3/video merging)" IsChecked="True"/>
-                    <CheckBox x:Name="chkProtocols" Content="Register download protocol handlers" IsChecked="True"/>
-                    <CheckBox x:Name="chkDesktopShortcut" Content="Create desktop shortcut to downloads folder" IsChecked="False"/>
-                </StackPanel>
-            </Border>
-            
-            <!-- Detected -->
-            <Border Background="#1a1a1a" CornerRadius="10" Padding="18">
-                <StackPanel>
-                    <TextBlock Text="Detected Components" FontSize="13" FontWeight="SemiBold" Foreground="White" Margin="0,0,0,10"/>
-                    <TextBlock x:Name="txtYtDlpStatus" Text="Checking yt-dlp..." Foreground="#888" FontSize="12"/>
-                    <TextBlock x:Name="txtFfmpegStatus" Text="Checking ffmpeg..." Foreground="#888" FontSize="12" Margin="0,4,0,0"/>
-                </StackPanel>
-            </Border>
-        </StackPanel>
-        
-        <!-- Log Output -->
-        <Border Grid.Row="2" Background="#0a0a0a" CornerRadius="8" Margin="0,15,0,0" x:Name="LogBorder" Visibility="Collapsed">
-            <ScrollViewer x:Name="LogScroller" VerticalScrollBarVisibility="Auto">
-                <TextBlock x:Name="txtLog" Foreground="#aaa" FontFamily="Consolas" FontSize="11"
-                           Padding="14" TextWrapping="Wrap"/>
-            </ScrollViewer>
+                <TextBlock Grid.Column="2" Text="v1.0.0" FontSize="12" Foreground="{StaticResource TextMuted}" VerticalAlignment="Top" FontFamily="Segoe UI Semibold"/>
+            </Grid>
         </Border>
         
-        <!-- Progress -->
-        <StackPanel Grid.Row="3" Margin="0,15,0,0">
-            <Border Background="#1a1a1a" CornerRadius="5" Height="8">
-                <Border x:Name="ProgressFill" Background="#00b894" CornerRadius="5" HorizontalAlignment="Left" Width="0"/>
-            </Border>
-            <TextBlock x:Name="txtStatus" Text="Ready to install" Foreground="#888" FontSize="12" Margin="0,10,0,0" HorizontalAlignment="Center"/>
-        </StackPanel>
+        <!-- Main Content -->
+        <TabControl x:Name="tabWizard" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="0">
+            <TabControl.ItemContainerStyle>
+                <Style TargetType="TabItem">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </Style>
+            </TabControl.ItemContainerStyle>
+            
+            <!-- Step 1 -->
+            <TabItem x:Name="tabStep1">
+                <Grid Margin="24,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
+                            <TextBlock Text="1" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                            <Rectangle Width="60" Height="2" Fill="{StaticResource Border}" VerticalAlignment="Center" Margin="8,0"/>
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource BgCard}" Stroke="{StaticResource Border}" StrokeThickness="2"/>
+                            <TextBlock Text="2" Foreground="{StaticResource TextMuted}" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                            <Rectangle Width="60" Height="2" Fill="{StaticResource Border}" VerticalAlignment="Center" Margin="8,0"/>
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource BgCard}" Stroke="{StaticResource Border}" StrokeThickness="2"/>
+                            <TextBlock Text="3" Foreground="{StaticResource TextMuted}" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="Step 1: Install Base Tools" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="320"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Download Folder" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,6"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="txtDownloadPath" Grid.Column="0" FontSize="12"/>
+                                <Button x:Name="btnBrowseDownload" Content="..." Grid.Column="1" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Padding="12,8" Width="40"/>
+                            </Grid>
+                            <TextBlock Text="Components to Install" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8"/>
+                            <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <Ellipse Width="8" Height="8" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                        <TextBlock Text="yt-dlp" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
+                                        <TextBlock Text=" - Download engine (1800+ sites)" Foreground="{StaticResource TextSecondary}"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <Ellipse Width="8" Height="8" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                        <TextBlock Text="ffmpeg" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
+                                        <TextBlock Text=" - Audio/video processing" Foreground="{StaticResource TextSecondary}"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                        <TextBlock Text="ytdl://" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
+                                        <TextBlock Text=" - Protocol handler" Foreground="{StaticResource TextSecondary}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Text="Options" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8"/>
+                            <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8" Padding="16">
+                                <StackPanel>
+                                    <CheckBox x:Name="chkAutoUpdate" Content="Auto-update yt-dlp before downloads" IsChecked="True" Margin="0,0,0,8"/>
+                                    <CheckBox x:Name="chkNotifications" Content="Show toast notifications" IsChecked="True" Margin="0,0,0,8"/>
+                                    <CheckBox x:Name="chkDesktopShortcut" Content="Create desktop shortcut" IsChecked="False"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                        <Border Grid.Column="2" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8" Padding="12">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="Installation Log" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8"/>
+                                <ScrollViewer x:Name="statusScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                    <TextBlock x:Name="txtStatus" Text="Ready to install..." FontFamily="Cascadia Code, Consolas" FontSize="11" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap"/>
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    <Border Grid.Row="1" VerticalAlignment="Bottom" Height="4" Background="{StaticResource BgCard}" CornerRadius="2" Margin="0,16,0,0">
+                        <Border x:Name="progressFill" HorizontalAlignment="Left" Width="0" Background="{StaticResource AccentGreen}" CornerRadius="2"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+            
+            <!-- Step 2 -->
+            <TabItem x:Name="tabStep2">
+                <Grid Margin="24,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
+                            <TextBlock Text="1" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                            <Rectangle Width="60" Height="2" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="8,0"/>
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
+                            <TextBlock Text="2" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                            <Rectangle Width="60" Height="2" Fill="{StaticResource Border}" VerticalAlignment="Center" Margin="8,0"/>
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource BgCard}" Stroke="{StaticResource Border}" StrokeThickness="2"/>
+                            <TextBlock Text="3" Foreground="{StaticResource TextMuted}" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="Step 2: Install Userscript Manager" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="1" HorizontalAlignment="Center" MaxWidth="600">
+                        <TextBlock Text="Select your browser to get the appropriate userscript manager:" FontSize="14" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center" Margin="0,0,0,24"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,24">
+                            <Button x:Name="btnChrome" Style="{StaticResource BrowserButton}" Margin="8"><Image x:Name="imgChrome" Width="40" Height="40"/></Button>
+                            <Button x:Name="btnFirefox" Style="{StaticResource BrowserButton}" Margin="8"><Image x:Name="imgFirefox" Width="40" Height="40"/></Button>
+                            <Button x:Name="btnEdge" Style="{StaticResource BrowserButton}" Margin="8"><Image x:Name="imgEdge" Width="40" Height="40"/></Button>
+                            <Button x:Name="btnSafari" Style="{StaticResource BrowserButton}" Margin="8"><Image x:Name="imgSafari" Width="40" Height="40"/></Button>
+                            <Button x:Name="btnOpera" Style="{StaticResource BrowserButton}" Margin="8"><Image x:Name="imgOpera" Width="40" Height="40"/></Button>
+                        </StackPanel>
+                        <Border x:Name="pnlBrowserLinks" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="12" Padding="24" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock x:Name="txtSelectedBrowser" Text="" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
+                                <TextBlock Text="Choose a userscript manager:" FontSize="13" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8"/>
+                                <StackPanel x:Name="pnlManagerLinks"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="Already have a userscript manager? Skip to the next step." FontSize="12" Foreground="{StaticResource TextMuted}" HorizontalAlignment="Center" Margin="0,24,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+            
+            <!-- Step 3 -->
+            <TabItem x:Name="tabStep3">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="32,24" HorizontalAlignment="Center" MaxWidth="600">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
+                            <TextBlock Text="1" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                            <Rectangle Width="60" Height="2" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="8,0"/>
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
+                            <TextBlock Text="2" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                            <Rectangle Width="60" Height="2" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="8,0"/>
+                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
+                            <TextBlock Text="3" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="Step 3: Install Userscript" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center" Margin="0,0,0,24"/>
+                        <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="12" Padding="24" Margin="0,0,0,16">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="MediaDL Userscript" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
+                                    <TextBlock Text="Universal media downloader for 1800+ sites" FontSize="13" Foreground="{StaticResource TextSecondary}" Margin="0,4,0,8"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Background="{StaticResource AccentGreen}" CornerRadius="4" Padding="8,4" Margin="0,0,8,0">
+                                            <TextBlock Text="Video" FontSize="11" Foreground="#0a0a0a" FontWeight="SemiBold"/>
+                                        </Border>
+                                        <Border Background="{StaticResource AccentPurple}" CornerRadius="4" Padding="8,4">
+                                            <TextBlock Text="MP3" FontSize="11" Foreground="White" FontWeight="SemiBold"/>
+                                        </Border>
+                                    </StackPanel>
+                                </StackPanel>
+                                <Button x:Name="btnInstallUserscript" Content="Install" Grid.Column="1" Style="{StaticResource BaseButton}" Padding="24,12" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource AccentGreen}" BorderThickness="2" CornerRadius="12" Padding="24" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Installation Complete!" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource AccentGreen}" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource TextSecondary}" TextAlignment="Center">
+                                    <Run Text="MediaDL is now ready to use. Visit any supported site and look for the"/>
+                                    <Run Text=" green drawer " Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold"/>
+                                    <Run Text="on the right edge of your screen."/>
+                                </TextBlock>
+                                <Button x:Name="btnOpenFolder" Content="Open Install Folder" Style="{StaticResource SecondaryButton}" Margin="0,16,0,0" Padding="16,10" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- Uninstall -->
+            <TabItem x:Name="tabUninstall">
+                <StackPanel Margin="32,24" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <Border Width="80" Height="80" CornerRadius="40" Background="{StaticResource AccentRed}" Margin="0,0,0,24" HorizontalAlignment="Center">
+                        <TextBlock Text="X" FontSize="40" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="Uninstall MediaDL" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                    <TextBlock Text="This will remove all installed components." FontSize="14" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center" Margin="0,0,0,32"/>
+                    <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="12" Padding="24" Margin="0,0,0,24">
+                        <StackPanel>
+                            <TextBlock Text="The following will be removed:" FontSize="13" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,12"/>
+                            <TextBlock Text="[X] Protocol handler (ytdl://)" Foreground="{StaticResource TextMuted}" FontFamily="Cascadia Code, Consolas" FontSize="12" Margin="0,4"/>
+                            <TextBlock Text="[X] yt-dlp and ffmpeg" Foreground="{StaticResource TextMuted}" FontFamily="Cascadia Code, Consolas" FontSize="12" Margin="0,4"/>
+                            <TextBlock Text="[X] Configuration files" Foreground="{StaticResource TextMuted}" FontFamily="Cascadia Code, Consolas" FontSize="12" Margin="0,4"/>
+                            <TextBlock Text="[!] Userscript must be removed manually" Foreground="#f97316" FontFamily="Cascadia Code, Consolas" FontSize="12" Margin="0,12,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button x:Name="btnCancelUninstall" Content="Cancel" Style="{StaticResource SecondaryButton}" Margin="0,0,12,0" Padding="24,12"/>
+                        <Button x:Name="btnConfirmUninstall" Content="Uninstall" Style="{StaticResource DangerButton}" Padding="24,12"/>
+                    </StackPanel>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
         
-        <!-- Buttons -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
-            <Button x:Name="btnInstall" Content="Install MediaDL" Style="{StaticResource PrimaryButton}" Width="200"/>
-            <Button x:Name="btnCancel" Content="Cancel" Style="{StaticResource SecondaryButton}" Width="100" Margin="15,0,0,0"/>
-        </StackPanel>
+        <!-- Footer -->
+        <Border Grid.Row="2" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+            <Grid Margin="32,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="btnUninstall" Content="Uninstall" Style="{StaticResource SecondaryButton}" Padding="16,10" Grid.Column="0"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="btnBack" Content="Back" Style="{StaticResource SecondaryButton}" Padding="20,10" Margin="0,0,12,0" Visibility="Collapsed"/>
+                    <Button x:Name="btnNext" Content="Install Base Tools" Style="{StaticResource BaseButton}" Padding="20,10"/>
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </Window>
 "@
 
+# ============================================
+# LOAD WINDOW
+# ============================================
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
-# Get controls
+# Get Controls
+$tabWizard = $window.FindName("tabWizard")
 $txtDownloadPath = $window.FindName("txtDownloadPath")
-$btnBrowse = $window.FindName("btnBrowse")
-$chkFfmpeg = $window.FindName("chkFfmpeg")
-$chkProtocols = $window.FindName("chkProtocols")
+$btnBrowseDownload = $window.FindName("btnBrowseDownload")
+$chkAutoUpdate = $window.FindName("chkAutoUpdate")
+$chkNotifications = $window.FindName("chkNotifications")
 $chkDesktopShortcut = $window.FindName("chkDesktopShortcut")
-$txtYtDlpStatus = $window.FindName("txtYtDlpStatus")
-$txtFfmpegStatus = $window.FindName("txtFfmpegStatus")
-$txtLog = $window.FindName("txtLog")
 $txtStatus = $window.FindName("txtStatus")
-$ProgressFill = $window.FindName("ProgressFill")
-$btnInstall = $window.FindName("btnInstall")
-$btnCancel = $window.FindName("btnCancel")
-$LogBorder = $window.FindName("LogBorder")
-$LogScroller = $window.FindName("LogScroller")
-$OptionsPanel = $window.FindName("OptionsPanel")
+$statusScroll = $window.FindName("statusScroll")
+$progressFill = $window.FindName("progressFill")
+$btnChrome = $window.FindName("btnChrome")
+$btnFirefox = $window.FindName("btnFirefox")
+$btnEdge = $window.FindName("btnEdge")
+$btnSafari = $window.FindName("btnSafari")
+$btnOpera = $window.FindName("btnOpera")
+$imgChrome = $window.FindName("imgChrome")
+$imgFirefox = $window.FindName("imgFirefox")
+$imgEdge = $window.FindName("imgEdge")
+$imgSafari = $window.FindName("imgSafari")
+$imgOpera = $window.FindName("imgOpera")
+$pnlBrowserLinks = $window.FindName("pnlBrowserLinks")
+$txtSelectedBrowser = $window.FindName("txtSelectedBrowser")
+$pnlManagerLinks = $window.FindName("pnlManagerLinks")
+$btnInstallUserscript = $window.FindName("btnInstallUserscript")
+$btnOpenFolder = $window.FindName("btnOpenFolder")
+$btnCancelUninstall = $window.FindName("btnCancelUninstall")
+$btnConfirmUninstall = $window.FindName("btnConfirmUninstall")
+$btnUninstall = $window.FindName("btnUninstall")
+$btnBack = $window.FindName("btnBack")
+$btnNext = $window.FindName("btnNext")
+
+# Load browser icons
+$imgChrome.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Chrome
+$imgFirefox.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Firefox
+$imgEdge.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Edge
+$imgSafari.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Safari
+$imgOpera.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Opera
 
 # Set defaults
 $txtDownloadPath.Text = $script:DefaultDownloadPath
+$script:CurrentStep = 1
+$script:BaseToolsInstalled = $false
 
-# Update status displays
-if ($ytdlpExists) {
-    $txtYtDlpStatus.Text = "yt-dlp: Found (will update)"
-    $txtYtDlpStatus.Foreground = "#00b894"
-} else {
-    $txtYtDlpStatus.Text = "yt-dlp: Will be installed"
-    $txtYtDlpStatus.Foreground = "#888"
+# Helper functions
+function Update-Status { param([string]$Message); $txtStatus.Text = $txtStatus.Text + "`n" + $Message; $statusScroll.ScrollToEnd(); $window.Dispatcher.Invoke([action]{}, [System.Windows.Threading.DispatcherPriority]::Render) }
+function Set-Progress { param([int]$Value); $maxWidth = $progressFill.Parent.ActualWidth; if ($maxWidth -le 0) { $maxWidth = 500 }; $progressFill.Width = ($Value / 100) * $maxWidth; $window.Dispatcher.Invoke([action]{}, [System.Windows.Threading.DispatcherPriority]::Render) }
+function Update-WizardButtons {
+    switch ($script:CurrentStep) {
+        1 { $btnBack.Visibility = "Collapsed"; $btnNext.Content = if ($script:BaseToolsInstalled) { "Next: Userscript Manager" } else { "Install Base Tools" } }
+        2 { $btnBack.Visibility = "Visible"; $btnNext.Content = "Next: Install Userscript" }
+        3 { $btnBack.Visibility = "Visible"; $btnNext.Content = "Finish" }
+        4 { $btnBack.Visibility = "Collapsed"; $btnNext.Visibility = "Collapsed" }
+    }
 }
 
-if ($ffmpegExists) {
-    $txtFfmpegStatus.Text = "ffmpeg: Found"
-    $txtFfmpegStatus.Foreground = "#00b894"
-    $chkFfmpeg.IsChecked = $false
-} else {
-    $txtFfmpegStatus.Text = "ffmpeg: Will be installed"
-    $txtFfmpegStatus.Foreground = "#888"
+function Show-BrowserLinks {
+    param([string]$Browser)
+    $pnlBrowserLinks.Visibility = "Visible"
+    $txtSelectedBrowser.Text = $Browser
+    $pnlManagerLinks.Children.Clear()
+    $managers = $script:UserscriptManagers[$Browser]
+    foreach ($manager in $managers.GetEnumerator()) {
+        $linkPanel = New-Object System.Windows.Controls.StackPanel; $linkPanel.Orientation = "Horizontal"; $linkPanel.Margin = "0,8,0,0"
+        $bullet = New-Object System.Windows.Controls.TextBlock; $bullet.Text = ">"; $bullet.Foreground = [System.Windows.Media.Brushes]::LimeGreen; $bullet.FontFamily = New-Object System.Windows.Media.FontFamily("Cascadia Code, Consolas"); $bullet.Margin = "0,0,8,0"
+        $link = New-Object System.Windows.Controls.TextBlock; $link.Cursor = [System.Windows.Input.Cursors]::Hand
+        $hyperlink = New-Object System.Windows.Documents.Hyperlink; $hyperlink.Inlines.Add($manager.Key); $hyperlink.Foreground = [System.Windows.Media.Brushes]::DodgerBlue; $hyperlink.TextDecorations = $null
+        $url = $manager.Value; $hyperlink.Add_Click({ Start-Process $url }.GetNewClosure())
+        $link.Inlines.Add($hyperlink); $linkPanel.Children.Add($bullet); $linkPanel.Children.Add($link); $pnlManagerLinks.Children.Add($linkPanel)
+    }
 }
 
-# Browse button
-$btnBrowse.Add_Click({
-    $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-    $folderBrowser.Description = "Select download folder"
-    $folderBrowser.SelectedPath = $txtDownloadPath.Text
-    if ($folderBrowser.ShowDialog() -eq "OK") {
-        $txtDownloadPath.Text = $folderBrowser.SelectedPath
+# Event handlers
+$btnBrowseDownload.Add_Click({ $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.SelectedPath = $txtDownloadPath.Text; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $txtDownloadPath.Text = $dialog.SelectedPath } })
+$btnChrome.Add_Click({ Show-BrowserLinks -Browser "Chrome" })
+$btnFirefox.Add_Click({ Show-BrowserLinks -Browser "Firefox" })
+$btnEdge.Add_Click({ Show-BrowserLinks -Browser "Edge" })
+$btnSafari.Add_Click({ Show-BrowserLinks -Browser "Safari" })
+$btnOpera.Add_Click({ Show-BrowserLinks -Browser "Opera" })
+$btnInstallUserscript.Add_Click({ Start-Process $script:UserscriptUrl })
+$btnOpenFolder.Add_Click({ if (Test-Path $script:InstallPath) { Start-Process explorer.exe -ArgumentList $script:InstallPath } })
+$btnBack.Add_Click({ if ($script:CurrentStep -eq 4) { $script:CurrentStep = 1; $tabWizard.SelectedIndex = 0; $btnNext.Visibility = "Visible" } elseif ($script:CurrentStep -gt 1) { $script:CurrentStep--; $tabWizard.SelectedIndex = $script:CurrentStep - 1 }; Update-WizardButtons })
+$btnUninstall.Add_Click({ $script:CurrentStep = 4; $tabWizard.SelectedIndex = 3; Update-WizardButtons })
+$btnCancelUninstall.Add_Click({ $script:CurrentStep = 1; $tabWizard.SelectedIndex = 0; $btnNext.Visibility = "Visible"; Update-WizardButtons })
+$btnConfirmUninstall.Add_Click({
+    if ([System.Windows.MessageBox]::Show("Are you sure you want to uninstall MediaDL?", "Confirm", "YesNo", "Warning") -eq "Yes") {
+        try {
+            Get-Process -Name "yt-dlp","ffmpeg" -ErrorAction SilentlyContinue | Stop-Process -Force
+            Remove-Item -Path "HKCU:\Software\Classes\ytdl" -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $script:InstallPath) { Remove-Item -Path $script:InstallPath -Recurse -Force }
+            Remove-Item "$env:USERPROFILE\Desktop\MediaDL Download.lnk" -Force -ErrorAction SilentlyContinue
+            [System.Windows.MessageBox]::Show("MediaDL uninstalled. Remove userscript manually from browser.", "Done", "OK", "Information")
+            $window.Close()
+        } catch { [System.Windows.MessageBox]::Show("Error: $($_.Exception.Message)", "Error", "OK", "Error") }
     }
 })
 
-# Cancel button
-$btnCancel.Add_Click({
-    $window.Close()
-})
-
-# Helper functions for UI updates
-function Update-Log {
-    param([string]$Message, [string]$Color = "#aaa")
-    $txtLog.Dispatcher.Invoke([action]{
-        $run = New-Object System.Windows.Documents.Run
-        $run.Text = "$Message`n"
-        $run.Foreground = $Color
-        $txtLog.Inlines.Add($run)
-        $LogScroller.ScrollToEnd()
-    })
-}
-
-function Set-Progress {
-    param([int]$Percent)
-    $ProgressFill.Dispatcher.Invoke([action]{
-        $ProgressFill.Width = [int](($Percent / 100) * 490)
-    })
-}
-
-function Update-Status {
-    param([string]$Text)
-    $txtStatus.Dispatcher.Invoke([action]{
-        $txtStatus.Text = $Text
-    })
-    Update-Log $Text
-}
-
-$script:InstallComplete = $false
-
-# Install button
-$btnInstall.Add_Click({
-    if ($script:InstallComplete) {
-        # Open userscript URL
-        Start-Process $script:UserscriptUrl
-        return
-    }
-    
-    $btnInstall.IsEnabled = $false
-    $OptionsPanel.Visibility = "Collapsed"
-    $LogBorder.Visibility = "Visible"
-    
-    try {
-        $dlPath = $txtDownloadPath.Text
-        
-        # Step 1: Create directories
-        Update-Status "Creating directories..."
-        if (!(Test-Path $script:InstallPath)) {
-            New-Item -ItemType Directory -Path $script:InstallPath -Force | Out-Null
-        }
-        if (!(Test-Path $dlPath)) {
-            New-Item -ItemType Directory -Path $dlPath -Force | Out-Null
-        }
-        Update-Log "  [OK] Directories created" "#00b894"
-        Set-Progress 10
-        
-        # Step 2: Download yt-dlp
-        Update-Status "Downloading yt-dlp..."
-        $ytdlpPath = Join-Path $script:InstallPath "yt-dlp.exe"
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-        $wc.DownloadFile($script:YtDlpUrl, $ytdlpPath)
-        $wc.Dispose()
-        Update-Log "  [OK] yt-dlp downloaded" "#00b894"
-        Set-Progress 30
-        
-        # Step 3: Download ffmpeg if needed
-        $ffmpegPath = $ffmpegExists
-        if ($chkFfmpeg.IsChecked -and !$ffmpegExists) {
-            Update-Status "Downloading ffmpeg (this may take a moment)..."
-            $ffmpegZip = Join-Path $env:TEMP "ffmpeg.zip"
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-            $wc.DownloadFile($script:FfmpegUrl, $ffmpegZip)
-            $wc.Dispose()
-            
-            Update-Log "  Extracting ffmpeg..." "#888"
-            $extractPath = Join-Path $env:TEMP "ffmpeg_extract"
-            Expand-Archive -Path $ffmpegZip -DestinationPath $extractPath -Force
-            
-            $ffmpegBin = Get-ChildItem -Path $extractPath -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-            if ($ffmpegBin) {
-                Copy-Item $ffmpegBin.FullName -Destination $script:InstallPath -Force
-                $ffprobePath = Join-Path $ffmpegBin.DirectoryName "ffprobe.exe"
-                if (Test-Path $ffprobePath) {
-                    Copy-Item $ffprobePath -Destination $script:InstallPath -Force
-                }
-                $ffmpegPath = Join-Path $script:InstallPath "ffmpeg.exe"
-            }
-            
-            Remove-Item $ffmpegZip -Force -ErrorAction SilentlyContinue
-            Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-            Update-Log "  [OK] ffmpeg installed" "#00b894"
-        } elseif ($ffmpegExists) {
-            $ffmpegPath = $ffmpegExists
-            Update-Log "  [OK] Using existing ffmpeg" "#00b894"
-        }
-        Set-Progress 50
-        
-        # Step 4: Save config
-        Update-Status "Saving configuration..."
-        $config = @{
-            DownloadPath = $dlPath
-            YtDlpPath = $ytdlpPath
-            FfmpegPath = $ffmpegPath
-            Notifications = $true
-            AutoUpdate = $true
-        }
-        $config | ConvertTo-Json | Set-Content (Join-Path $script:InstallPath "config.json") -Encoding UTF8
-        Update-Log "  [OK] Configuration saved" "#00b894"
-        Set-Progress 55
-        
-        # Step 5: Create protocol handlers
-        if ($chkProtocols.IsChecked) {
-            Update-Status "Creating protocol handlers..."
-            
-            # Download Handler with Progress UI (based on original YTYT)
-            $dlHandler = @'
-param([string]$url)
-
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-[System.Windows.Forms.Application]::EnableVisualStyles()
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
-$configPath = Join-Path $PSScriptRoot "config.json"
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
-
-$videoUrl = $url -replace '^ytdl://', ''
-$videoUrl = [System.Uri]::UnescapeDataString($videoUrl)
-
-$audioOnly = $videoUrl -match "ytyt_audio_only=1|mediadl_audio_only=1"
-$videoUrl = $videoUrl -replace "[&?](ytyt_audio_only|mediadl_audio_only)=1", ""
-
-$progressFile = Join-Path $env:TEMP "mediadl_progress_$([guid]::NewGuid().ToString('N')).txt"
-
-# Create progress form
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "MediaDL Download"
-$form.Size = New-Object System.Drawing.Size(420, 140)
-$form.FormBorderStyle = "None"
-$form.StartPosition = "Manual"
-$form.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 18)
-$form.TopMost = $true
-$form.ShowInTaskbar = $false
-
-# Position bottom-right, stacking for multiple downloads
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$baseX = $screen.Right - 436
-$baseY = $screen.Bottom - 156
-
-$script:mySlot = 0
-for ($i = 0; $i -lt 6; $i++) {
-    $slotFile = Join-Path $env:TEMP "mediadl_slot_$i.lock"
-    if (!(Test-Path $slotFile)) {
-        $script:mySlot = $i
-        "lock" | Out-File $slotFile -Force
-        break
-    }
-}
-
-$offsetY = $script:mySlot * 150
-$newY = $baseY - $offsetY
-if ($newY -lt 50) { $newY = 50 }
-$form.Location = New-Object System.Drawing.Point($baseX, $newY)
-
-# Make draggable
-$script:dragStart = $null
-$form.Add_MouseDown({ param($s,$e) if ($e.Button -eq "Left") { $script:dragStart = $e.Location } })
-$form.Add_MouseMove({ param($s,$e) if ($script:dragStart) { $form.Location = [System.Drawing.Point]::new(($form.Location.X + $e.X - $script:dragStart.X), ($form.Location.Y + $e.Y - $script:dragStart.Y)) } })
-$form.Add_MouseUp({ $script:dragStart = $null })
-
-# Header
-$lblHeader = New-Object System.Windows.Forms.Label
-$lblHeader.Text = if ($audioOnly) { "MediaDL - Audio" } else { "MediaDL - Video" }
-$lblHeader.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$lblHeader.ForeColor = [System.Drawing.Color]::FromArgb(0, 184, 148)
-$lblHeader.Location = New-Object System.Drawing.Point(16, 10)
-$lblHeader.AutoSize = $true
-$form.Controls.Add($lblHeader)
-
-# Close button
-$btnClose = New-Object System.Windows.Forms.Label
-$btnClose.Text = "X"
-$btnClose.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$btnClose.ForeColor = [System.Drawing.Color]::Gray
-$btnClose.Location = New-Object System.Drawing.Point(390, 10)
-$btnClose.Size = New-Object System.Drawing.Size(20, 20)
-$btnClose.Cursor = "Hand"
-$btnClose.Add_Click({ $script:cancelled = $true; $form.Close() })
-$btnClose.Add_MouseEnter({ $btnClose.ForeColor = [System.Drawing.Color]::Red })
-$btnClose.Add_MouseLeave({ $btnClose.ForeColor = [System.Drawing.Color]::Gray })
-$form.Controls.Add($btnClose)
-
-# Title label
-$lblTitle = New-Object System.Windows.Forms.Label
-$lblTitle.Text = "Fetching video info..."
-$lblTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblTitle.ForeColor = [System.Drawing.Color]::White
-$lblTitle.Location = New-Object System.Drawing.Point(16, 38)
-$lblTitle.Size = New-Object System.Drawing.Size(380, 20)
-$form.Controls.Add($lblTitle)
-
-# Progress bar background
-$pnlProgress = New-Object System.Windows.Forms.Panel
-$pnlProgress.Size = New-Object System.Drawing.Size(230, 8)
-$pnlProgress.Location = New-Object System.Drawing.Point(16, 68)
-$pnlProgress.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
-$form.Controls.Add($pnlProgress)
-
-# Progress bar fill
-$pnlFill = New-Object System.Windows.Forms.Panel
-$pnlFill.Size = New-Object System.Drawing.Size(0, 8)
-$pnlFill.BackColor = [System.Drawing.Color]::FromArgb(0, 184, 148)
-$pnlProgress.Controls.Add($pnlFill)
-
-# Percentage
-$lblPct = New-Object System.Windows.Forms.Label
-$lblPct.Text = "0%"
-$lblPct.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblPct.ForeColor = [System.Drawing.Color]::White
-$lblPct.Location = New-Object System.Drawing.Point(254, 64)
-$lblPct.AutoSize = $true
-$form.Controls.Add($lblPct)
-
-# Speed
-$lblSpeed = New-Object System.Windows.Forms.Label
-$lblSpeed.Text = ""
-$lblSpeed.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-$lblSpeed.ForeColor = [System.Drawing.Color]::Gray
-$lblSpeed.Location = New-Object System.Drawing.Point(300, 64)
-$lblSpeed.AutoSize = $true
-$form.Controls.Add($lblSpeed)
-
-# Status
-$lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Text = "Starting..."
-$lblStatus.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblStatus.ForeColor = [System.Drawing.Color]::Gray
-$lblStatus.Location = New-Object System.Drawing.Point(16, 90)
-$lblStatus.Size = New-Object System.Drawing.Size(280, 20)
-$form.Controls.Add($lblStatus)
-
-# ETA
-$lblEta = New-Object System.Windows.Forms.Label
-$lblEta.Text = ""
-$lblEta.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-$lblEta.ForeColor = [System.Drawing.Color]::Gray
-$lblEta.Location = New-Object System.Drawing.Point(300, 90)
-$lblEta.AutoSize = $true
-$form.Controls.Add($lblEta)
-
-# System tray icon
-$tray = New-Object System.Windows.Forms.NotifyIcon
-$tray.Icon = [System.Drawing.SystemIcons]::Application
-$tray.Text = "MediaDL Download"
-$tray.Visible = $true
-$tray.Add_Click({ $form.Show(); $form.Activate() })
-
-$script:step = 0
-$script:job = $null
-$script:cancelled = $false
-$script:retryCount = 0
-$script:maxRetries = 3
-
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 500
-$timer.Add_Tick({
-    try {
-        if ($script:step -eq 0) {
-            $lblStatus.Text = "Fetching video info..."
-            $script:step = 1
-        }
-        elseif ($script:step -eq 1) {
-            try {
-                $prevEncoding = [Console]::OutputEncoding
-                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-                $titleResult = & $config.YtDlpPath --get-title --no-warnings --no-playlist $videoUrl 2>$null
-                [Console]::OutputEncoding = $prevEncoding
-                if ($titleResult) {
-                    $lblTitle.Text = $titleResult.Trim().Substring(0, [Math]::Min(60, $titleResult.Trim().Length))
-                    $tray.Text = "DL: " + $titleResult.Substring(0, [Math]::Min(45, $titleResult.Length))
-                }
-            } catch {}
-            $script:step = 2
-        }
-        elseif ($script:step -eq 2) {
-            $lblStatus.Text = "Starting download..."
-            $ffLoc = Split-Path $config.FfmpegPath -Parent
-            $outTpl = Join-Path $config.DownloadPath "%(title)s.%(ext)s"
-            $ytdlp = $config.YtDlpPath
-            "" | Set-Content $progressFile -Force
-            
-            if ($audioOnly) {
-                $outTpl = Join-Path $config.DownloadPath "%(title)s.mp3"
-                $lblStatus.Text = "Downloading audio..."
-                $script:job = Start-Job -ScriptBlock {
-                    param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile)
-                    & $ytdlp -f bestaudio --extract-audio --audio-format mp3 --audio-quality 0 --newline --progress --ffmpeg-location $ffLoc -o $outTpl $vUrl 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8; $_ }
-                } -ArgumentList $ytdlp, $ffLoc, $outTpl, $videoUrl, $progressFile
-            } else {
-                $lblStatus.Text = "Downloading video..."
-                $script:job = Start-Job -ScriptBlock {
-                    param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile)
-                    & $ytdlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" --merge-output-format mp4 --newline --progress --ffmpeg-location $ffLoc -o $outTpl $vUrl 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8; $_ }
-                } -ArgumentList $ytdlp, $ffLoc, $outTpl, $videoUrl, $progressFile
-            }
-            $script:step = 3
-        }
-        elseif ($script:step -eq 3) {
-            if (Test-Path $progressFile) {
+$btnNext.Add_Click({
+    switch ($script:CurrentStep) {
+        1 {
+            if (-not $script:BaseToolsInstalled) {
+                $btnNext.IsEnabled = $false
+                $txtStatus.Text = "Starting installation..."
+                Set-Progress 0
                 try {
-                    $content = Get-Content $progressFile -Raw -ErrorAction SilentlyContinue
-                    if ($content) {
-                        $allMatches = [regex]::Matches($content, '\[download\]\s+(\d+\.?\d*)%')
-                        if ($allMatches.Count -gt 0) {
-                            $lastMatch = $allMatches[$allMatches.Count - 1]
-                            $pct = [double]$lastMatch.Groups[1].Value
-                            $pnlFill.Width = [int](($pct / 100) * 230)
-                            $lblPct.Text = [math]::Round($pct).ToString() + "%"
-                        }
-                        if ($content -match '(?s).*of\s+~?(\d+\.?\d*\w+)\s+at\s+(\S+)\s+ETA\s+(\S+)') {
-                            $lblStatus.Text = "Downloading ($($matches[1]))..."
-                            $lblSpeed.Text = $matches[2]
-                            $lblEta.Text = "ETA " + $matches[3]
-                        }
-                        if ($content -match 'already been downloaded') {
-                            $lblStatus.Text = "Already downloaded"
-                            $pnlFill.Width = 230
-                            $lblPct.Text = "100%"
-                        }
-                        elseif ($content -match '\[Merger\]|Merging formats') {
-                            $lblStatus.Text = "Merging audio/video..."
-                            $lblSpeed.Text = ""; $lblEta.Text = ""
-                        }
-                        elseif ($content -match '\[ExtractAudio\]') {
-                            $lblStatus.Text = "Extracting audio..."
-                        }
+                    Update-Status "Creating directories..."
+                    if (!(Test-Path $script:InstallPath)) { New-Item -ItemType Directory -Path $script:InstallPath -Force | Out-Null }
+                    Update-Status "  [OK] $($script:InstallPath)"
+                    $dlPath = $txtDownloadPath.Text
+                    if (!(Test-Path $dlPath)) { New-Item -ItemType Directory -Path $dlPath -Force | Out-Null }
+                    Update-Status "  [OK] $dlPath"
+                    Set-Progress 10
+                    
+                    Update-Status "Downloading yt-dlp..."
+                    $ytdlpPath = Join-Path $script:InstallPath "yt-dlp.exe"
+                    Invoke-WebRequest -Uri $script:YtDlpUrl -OutFile $ytdlpPath -UseBasicParsing
+                    Update-Status "  [OK] yt-dlp downloaded"
+                    Set-Progress 30
+                    
+                    Update-Status "Downloading ffmpeg..."
+                    $ffmpegZipUrl = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+                    $ffmpegZip = Join-Path $script:InstallPath "ffmpeg.zip"
+                    $ffmpegPath = Join-Path $script:InstallPath "ffmpeg.exe"
+                    if (!(Test-Path $ffmpegPath)) {
+                        try {
+                            Invoke-WebRequest -Uri $ffmpegZipUrl -OutFile $ffmpegZip -UseBasicParsing
+                            Update-Status "  [OK] ffmpeg archive downloaded"
+                            Add-Type -AssemblyName System.IO.Compression.FileSystem
+                            $zip = [System.IO.Compression.ZipFile]::OpenRead($ffmpegZip)
+                            $entry = $zip.Entries | Where-Object { $_.Name -eq "ffmpeg.exe" } | Select-Object -First 1
+                            if ($entry) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $ffmpegPath, $true) }
+                            $zip.Dispose()
+                            Remove-Item $ffmpegZip -Force -ErrorAction SilentlyContinue
+                            Update-Status "  [OK] ffmpeg extracted"
+                        } catch { Update-Status "  [!] ffmpeg download failed" }
                     }
-                } catch {}
-            }
-            
-            if ($script:cancelled -and $script:job) {
-                Stop-Job -Job $script:job -ErrorAction SilentlyContinue
-                Remove-Job -Job $script:job -Force -ErrorAction SilentlyContinue
-                $script:step = 4
-                return
-            }
-            
-            if ($script:job -and $script:job.State -ne "Running") {
-                $script:step = 4
-            }
-        }
-        elseif ($script:step -eq 4) {
-            $timer.Stop()
-            
-            if ($script:job) {
-                $jobOutput = Receive-Job -Job $script:job -ErrorAction SilentlyContinue | Out-String
-                Remove-Job -Job $script:job -Force -ErrorAction SilentlyContinue
-            }
-            
-            if (Test-Path $progressFile) { Remove-Item $progressFile -Force -ErrorAction SilentlyContinue }
-            
-            if ($script:cancelled) {
-                $lblStatus.Text = "Cancelled"
-                $lblStatus.ForeColor = [System.Drawing.Color]::Orange
-                $tray.ShowBalloonTip(2000, "MediaDL", "Download cancelled", "Warning")
-            } else {
-                $progressContent = ""
-                if (Test-Path $progressFile) { $progressContent = Get-Content $progressFile -Raw -ErrorAction SilentlyContinue }
-                $allOutput = $jobOutput + $progressContent
-                
-                $success = ($allOutput -match "100%|has already been downloaded|Merging formats into|DelayedMuxer")
-                
-                if ($success) {
-                    $pnlFill.Width = 230
-                    $lblPct.Text = "100%"
-                    $lblStatus.Text = "Complete!"
-                    $lblStatus.ForeColor = [System.Drawing.Color]::LimeGreen
-                    $lblSpeed.Text = ""; $lblEta.Text = ""
-                    $tray.ShowBalloonTip(3000, "MediaDL", "Download complete!", "Info")
-                    $ct = New-Object System.Windows.Forms.Timer
-                    $ct.Interval = 4000
-                    $ct.Add_Tick({ $ct.Stop(); $form.Close() })
-                    $ct.Start()
-                } else {
-                    $script:retryCount++
-                    if ($script:retryCount -lt $script:maxRetries) {
-                        $lblStatus.Text = "Retrying ($($script:retryCount)/$($script:maxRetries))..."
-                        $lblStatus.ForeColor = [System.Drawing.Color]::Orange
-                        $pnlFill.Width = 0
-                        $lblPct.Text = "0%"
-                        $lblSpeed.Text = ""; $lblEta.Text = ""
-                        $script:step = 2
-                        $timer.Start()
-                    } else {
-                        $lblStatus.Text = "Failed after $($script:maxRetries) attempts"
-                        $lblStatus.ForeColor = [System.Drawing.Color]::Red
-                        $tray.ShowBalloonTip(3000, "MediaDL", "Download failed", "Error")
-                    }
-                }
-            }
-        }
-    } catch {
-        $lblStatus.Text = "Error: $_"
-        $lblStatus.ForeColor = [System.Drawing.Color]::Red
-    }
-})
-
-$form.Add_Shown({ $timer.Start() })
-
-$form.Add_FormClosed({
-    $timer.Stop()
-    if ($script:job) { 
-        Stop-Job -Job $script:job -ErrorAction SilentlyContinue
-        Remove-Job -Job $script:job -Force -ErrorAction SilentlyContinue 
-    }
-    if (Test-Path $progressFile) { Remove-Item $progressFile -Force -ErrorAction SilentlyContinue }
-    $slotFile = Join-Path $env:TEMP "mediadl_slot_$($script:mySlot).lock"
-    if (Test-Path $slotFile) { Remove-Item $slotFile -Force -ErrorAction SilentlyContinue }
-    $tray.Visible = $false
-    $tray.Dispose()
-})
-
+                    Set-Progress 50
+                    
+                    Update-Status "Saving config..."
+                    @{ DownloadPath = $dlPath; AutoUpdate = $chkAutoUpdate.IsChecked; Notifications = $chkNotifications.IsChecked; YtDlpPath = $ytdlpPath; FfmpegPath = $ffmpegPath } | ConvertTo-Json | Set-Content (Join-Path $script:InstallPath "config.json") -Encoding UTF8
+                    Update-Status "  [OK] Config saved"
+                    Set-Progress 60
+                    
+                    Update-Status "Creating handler..."
+                    $handler = @'
+param([string]$url)
+Add-Type -AssemblyName System.Windows.Forms
+$config = Get-Content (Join-Path $PSScriptRoot "config.json") -Raw | ConvertFrom-Json
+$videoUrl = [System.Uri]::UnescapeDataString($url -replace '^ytdl://', '')
+$audioOnly = $videoUrl -match "ytyt_audio_only=1"
+$videoUrl = $videoUrl -replace "[&?]ytyt_audio_only=1", ""
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "MediaDL"; $form.Size = "420,100"; $form.FormBorderStyle = "None"; $form.StartPosition = "Manual"; $form.BackColor = [System.Drawing.Color]::FromArgb(18,18,18); $form.TopMost = $true
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$form.Location = "$($screen.Right - 436),$($screen.Bottom - 116)"
+$lbl = New-Object System.Windows.Forms.Label; $lbl.Text = "Downloading..."; $lbl.ForeColor = "White"; $lbl.Font = "Segoe UI,10"; $lbl.Location = "16,16"; $lbl.AutoSize = $true; $form.Controls.Add($lbl)
+$pnl = New-Object System.Windows.Forms.Panel; $pnl.Size = "380,8"; $pnl.Location = "16,50"; $pnl.BackColor = [System.Drawing.Color]::FromArgb(50,50,50); $form.Controls.Add($pnl)
+$fill = New-Object System.Windows.Forms.Panel; $fill.Size = "0,8"; $fill.BackColor = if($audioOnly){[System.Drawing.Color]::FromArgb(108,92,231)}else{[System.Drawing.Color]::FromArgb(0,184,148)}; $pnl.Controls.Add($fill)
+$close = New-Object System.Windows.Forms.Label; $close.Text = "X"; $close.ForeColor = "Gray"; $close.Font = "Segoe UI,10,Bold"; $close.Location = "390,10"; $close.Cursor = "Hand"; $close.Add_Click({$form.Close()}); $form.Controls.Add($close)
+$prog = Join-Path $env:TEMP "mdl_$([guid]::NewGuid().ToString('N')).txt"
+$ffLoc = Split-Path $config.FfmpegPath -Parent
+$outTpl = if($audioOnly){Join-Path $config.DownloadPath "%(title)s.mp3"}else{Join-Path $config.DownloadPath "%(title)s.%(ext)s"}
+$job = if($audioOnly){Start-Job{param($y,$f,$o,$u,$p);&$y -f bestaudio --extract-audio --audio-format mp3 --newline --ffmpeg-location $f -o $o $u 2>&1|%{$_|Out-File $p -Append;$_}}-Arg $config.YtDlpPath,$ffLoc,$outTpl,$videoUrl,$prog}else{Start-Job{param($y,$f,$o,$u,$p);&$y -f "bestvideo[height<=1080]+bestaudio/best" --merge-output-format mp4 --newline --ffmpeg-location $f -o $o $u 2>&1|%{$_|Out-File $p -Append;$_}}-Arg $config.YtDlpPath,$ffLoc,$outTpl,$videoUrl,$prog}
+$timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 500
+$timer.Add_Tick({if(Test-Path $prog){$l=Get-Content $prog -ErrorAction SilentlyContinue|Select -Last 1;if($l-match'(\d+)%'){$fill.Width=[int]([double]$matches[1]/100*380)}};if($job.State-eq"Completed"){$timer.Stop();$fill.Width=380;Start-Sleep 1;$form.Close()}elseif($job.State-eq"Failed"){$timer.Stop();$lbl.Text="Failed";Start-Sleep 2;$form.Close()}})
+$form.Add_Shown({$timer.Start()})
+$form.Add_FormClosed({$timer.Stop();Stop-Job $job -EA 0;Remove-Job $job -Force -EA 0;Remove-Item $prog -Force -EA 0})
 [System.Windows.Forms.Application]::Run($form)
 '@
-            $dlHandler | Set-Content (Join-Path $script:InstallPath "ytdl-handler.ps1") -Encoding UTF8
-            Update-Log "  [OK] Download handler with progress UI" "#00b894"
-            Set-Progress 75
-            
-            # Register protocol handlers in registry
-            Update-Status "Registering URL protocols..."
-            
-            # ytdl:// protocol
-            $ytdlRegPath = "HKCU:\Software\Classes\ytdl"
-            New-Item -Path $ytdlRegPath -Force | Out-Null
-            Set-ItemProperty -Path $ytdlRegPath -Name "(Default)" -Value "URL:YTDL Protocol"
-            Set-ItemProperty -Path $ytdlRegPath -Name "URL Protocol" -Value ""
-            New-Item -Path "$ytdlRegPath\shell\open\command" -Force | Out-Null
-            $handlerPath = Join-Path $script:InstallPath "ytdl-handler.ps1"
-            Set-ItemProperty -Path "$ytdlRegPath\shell\open\command" -Name "(Default)" -Value "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$handlerPath`" `"%1`""
-            
-            Update-Log "  [OK] Protocols registered" "#00b894"
+                    $handler | Set-Content (Join-Path $script:InstallPath "ytdl-handler.ps1") -Encoding UTF8
+                    Update-Status "  [OK] Handler created"
+                    Set-Progress 75
+                    
+                    Update-Status "Registering protocol..."
+                    $handlerPath = Join-Path $script:InstallPath "ytdl-handler.ps1"
+                    New-Item -Path "HKCU:\Software\Classes\ytdl" -Force | Out-Null
+                    Set-ItemProperty -Path "HKCU:\Software\Classes\ytdl" -Name "(Default)" -Value "URL:YTDL Protocol"
+                    Set-ItemProperty -Path "HKCU:\Software\Classes\ytdl" -Name "URL Protocol" -Value ""
+                    New-Item -Path "HKCU:\Software\Classes\ytdl\shell\open\command" -Force | Out-Null
+                    Set-ItemProperty -Path "HKCU:\Software\Classes\ytdl\shell\open\command" -Name "(Default)" -Value "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$handlerPath`" `"%1`""
+                    Update-Status "  [OK] Protocol registered"
+                    Set-Progress 90
+                    
+                    if ($chkDesktopShortcut.IsChecked) {
+                        $WshShell = New-Object -ComObject WScript.Shell
+                        $shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\MediaDL Download.lnk")
+                        $shortcut.TargetPath = "powershell.exe"
+                        $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -Command `"Add-Type -AssemblyName System.Windows.Forms;`$u=[System.Windows.Forms.Clipboard]::GetText();if(`$u-match'http'){Start-Process('ytdl://'+`$u)}`""
+                        $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,175"
+                        $shortcut.Save()
+                        Update-Status "  [OK] Shortcut created"
+                    }
+                    Set-Progress 100
+                    Update-Status "`n========================================"
+                    Update-Status "Installation complete!"
+                    Update-Status "========================================"
+                    $script:BaseToolsInstalled = $true
+                    $btnNext.Content = "Next: Userscript Manager"
+                } catch { Update-Status "`n[ERROR] $($_.Exception.Message)"; [System.Windows.MessageBox]::Show("Installation failed: $($_.Exception.Message)", "Error", "OK", "Error") }
+                $btnNext.IsEnabled = $true
+            } else { $script:CurrentStep = 2; $tabWizard.SelectedIndex = 1; Update-WizardButtons }
         }
-        Set-Progress 85
-        
-        # Desktop shortcut
-        if ($chkDesktopShortcut.IsChecked) {
-            Update-Status "Creating desktop shortcut..."
-            $WshShell = New-Object -ComObject WScript.Shell
-            $shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\MediaDL Downloads.lnk")
-            $shortcut.TargetPath = $dlPath
-            $shortcut.Save()
-            Update-Log "  [OK] Desktop shortcut created" "#00b894"
-        }
-        
-        Set-Progress 100
-        Update-Log "" "#00b894"
-        Update-Log "========================================" "#00b894"
-        Update-Log "MediaDL installed successfully!" "#00b894"
-        Update-Log "========================================" "#00b894"
-        Update-Log "" "#aaa"
-        Update-Log "Next step: Install the userscript in your browser" "#f39c12"
-        Update-Log "Tampermonkey or Violentmonkey required" "#888"
-        
-        $script:InstallComplete = $true
-        $btnInstall.Content = "Install Userscript"
-        $btnInstall.IsEnabled = $true
-        $btnCancel.Content = "Close"
-        
-    } catch {
-        Update-Log "" "#ff7675"
-        Update-Log "[ERROR] $($_.Exception.Message)" "#ff7675"
-        [System.Windows.MessageBox]::Show("Installation failed:`n`n$($_.Exception.Message)", "Error", "OK", "Error")
-        $btnInstall.IsEnabled = $true
+        2 { $script:CurrentStep = 3; $tabWizard.SelectedIndex = 2; Update-WizardButtons }
+        3 { $window.Close() }
     }
 })
 
+Update-WizardButtons
 $window.ShowDialog() | Out-Null
-
-# Cleanup temp files
 Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
