@@ -38,13 +38,13 @@ $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\MediaDL"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
 $script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js"
 
-# Browser icon URLs
+# Browser icon URLs (using YTYT-Downloader repo for shared assets)
 $script:BrowserIcons = @{
-    Chrome  = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/google-chrome.png"
-    Firefox = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/mozilla-firefox.png"
-    Edge    = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/microsoft-edge.png"
-    Safari  = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/apple-safari.png"
-    Opera   = "https://raw.githubusercontent.com/AbuCarlo/browser-icons/master/icons/opera.png"
+    Chrome  = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/chrome.png"
+    Firefox = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/firefox.png"
+    Edge    = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/edge.png"
+    Safari  = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/safari.png"
+    Opera   = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/opera.png"
 }
 
 # Userscript manager links by browser
