@@ -5,6 +5,14 @@
 // @description  Download videos and extract audio from 1800+ sites - powered by yt-dlp
 // @author       SysAdminDoc
 // @license      MIT
+// @icon         data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2300b894'/%3E%3Ctext x='50' y='68' font-size='50' font-weight='bold' text-anchor='middle' fill='%230a0a0a'%3EM%3C/text%3E%3C/svg%3E
+// @homepageURL  https://github.com/SysAdminDoc/MediaDL
+// @supportURL   https://github.com/SysAdminDoc/MediaDL/issues
+// @updateURL    https://github.com/SysAdminDoc/MediaDL/raw/main/MediaDL.user.js
+// @downloadURL  https://github.com/SysAdminDoc/MediaDL/raw/main/MediaDL.user.js
+// @grant        GM_addStyle
+// @run-at       document-idle
+// @noframes
 // @match        *://*.youtube.com/*
 // @match        *://*.youtu.be/*
 // @match        *://*.googlevideo.com/*
@@ -1143,12 +1151,6 @@
 // @match        *://*.zingmp3.vn/*
 // @match        *://*.zoom.us/*
 // @match        *://*.zype.com/*
-// @icon         data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300b894'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z'/%3E%3C/svg%3E
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_addStyle
-// @run-at       document-idle
-// @noframes
 // ==/UserScript==
 
 (function() {
@@ -1278,6 +1280,98 @@
             urlPattern: /imgur\.com\/(a\/|gallery\/)?[\w]+/,
             getVideoUrl: () => location.href,
             getVideoTitle: () => document.querySelector('.post-title, h1')?.textContent?.trim() || 'imgur'
+        },
+        'pornhub.com': {
+            name: 'PornHub',
+            urlPattern: /pornhub\.com\/view_video\.php/,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1.title span')?.textContent?.trim() || 'video'
+        },
+        'xvideos.com': {
+            name: 'XVideos',
+            urlPattern: /xvideos\.com\/video\d+/,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h2.page-title')?.textContent?.trim() || 'video'
+        },
+        'xhamster.com': {
+            name: 'xHamster',
+            urlPattern: /xhamster\.com\/videos\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'video'
+        },
+        'mixcloud.com': {
+            name: 'Mixcloud',
+            urlPattern: /mixcloud\.com\/[\w-]+\/[\w-]+/,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'mixcloud_audio',
+            audioOnly: true
+        },
+        'spotify.com': {
+            name: 'Spotify',
+            urlPattern: /open\.spotify\.com\/(track|episode)\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'spotify_audio',
+            audioOnly: true
+        },
+        'ted.com': {
+            name: 'TED',
+            urlPattern: /ted\.com\/talks\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'ted_talk'
+        },
+        'cnn.com': {
+            name: 'CNN',
+            urlPattern: /cnn\.com\/videos\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'cnn_video'
+        },
+        'bbc.com': {
+            name: 'BBC',
+            urlPattern: /bbc\.com\/.*\/video/,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'bbc_video'
+        },
+        'crunchyroll.com': {
+            name: 'Crunchyroll',
+            urlPattern: /crunchyroll\.com\/watch\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'crunchyroll_video'
+        },
+        'kick.com': {
+            name: 'Kick',
+            urlPattern: /kick\.com\/video\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'kick_video'
+        },
+        'coub.com': {
+            name: 'Coub',
+            urlPattern: /coub\.com\/view\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('.coub__title')?.textContent?.trim() || 'coub_video'
+        },
+        'bitchute.com': {
+            name: 'BitChute',
+            urlPattern: /bitchute\.com\/video\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'bitchute_video'
+        },
+        'loom.com': {
+            name: 'Loom',
+            urlPattern: /loom\.com\/share\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'loom_video'
+        },
+        'nebula.tv': {
+            name: 'Nebula',
+            urlPattern: /nebula\.tv\/videos\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'nebula_video'
+        },
+        'floatplane.com': {
+            name: 'Floatplane',
+            urlPattern: /floatplane\.com\/post\//,
+            getVideoUrl: () => location.href,
+            getVideoTitle: () => document.querySelector('h1')?.textContent?.trim() || 'floatplane_video'
         }
     };
 
