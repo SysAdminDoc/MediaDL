@@ -10,7 +10,7 @@
 .NOTES
     Author: SysAdminDoc
     Version: 4.0.0
-    Repository: https://github.com/SysAdminDoc/YTYT-Downloader
+    Repository: https://github.com/SysAdminDoc/MediaDL
 #>
 
 #Requires -Version 5.1
@@ -44,8 +44,8 @@ $script:AppVersion = "4.0.0"
 $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
-$script:GitHubRepo = "https://github.com/SysAdminDoc/YTYT-Downloader"
-$script:UserscriptUrl = "https://github.com/SysAdminDoc/YTYT-Downloader/raw/refs/heads/main/src/MediaDL.user.js"
+$script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
+$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/src/MediaDL.user.js"
 
 
 # Image URLs
