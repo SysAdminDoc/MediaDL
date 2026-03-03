@@ -14,7 +14,7 @@
 <br><br>
 
 <!-- BADGES -->
-[![Version](https://img.shields.io/badge/v4.0.0-00b894?style=for-the-badge&logo=semanticrelease&logoColor=white&label=Version)](https://github.com/SysAdminDoc/YTYT-Downloader/releases)
+[![Version](https://img.shields.io/badge/v4.0.0-00b894?style=for-the-badge&logo=semanticrelease&logoColor=white&label=Version)](https://github.com/SysAdminDoc/MediaDL/releases)
 &nbsp;
 [![Sites](https://img.shields.io/badge/1800+-e17055?style=for-the-badge&logo=youtube&logoColor=white&label=Sites)](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 &nbsp;
@@ -52,7 +52,7 @@
 > **One command. Everything configured. No manual setup.**
 
 ```powershell
-irm https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/src/Install-MediaDL.ps1 | iex
+irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
 ```
 
 <sub>Run in an elevated PowerShell window. The installer downloads yt-dlp, ffmpeg, registers protocol handlers, deploys the background download server, creates a Scheduled Task for auto-start, and installs the userscript.</sub>
@@ -270,7 +270,7 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 
 ```powershell
 # Open PowerShell as Administrator, then run:
-irm https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/src/Install-MediaDL.ps1 | iex
+irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Install-MediaDL.ps1 | iex
 ```
 
 The installer creates a **`MediaDL-Server`** Scheduled Task that auto-starts the background server on login. No console windows will appear.
@@ -279,7 +279,7 @@ The installer creates a **`MediaDL-Server`** Scheduled Task that auto-starts the
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/)
 2. Install the userscript:
-   - **[MediaDL — Universal Media Downloader](https://github.com/SysAdminDoc/YTYT-Downloader/raw/refs/heads/main/src/MediaDL.user.js)**
+   - **[MediaDL — Universal Media Downloader](https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js)**
 3. Install [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://ffmpeg.org/)
 4. Set up protocol handlers manually *(see below)*
 
@@ -390,8 +390,8 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 <br><br>
 
-[<kbd> <br> &nbsp;&nbsp;🐛 Report Issues&nbsp;&nbsp; <br> </kbd>](https://github.com/SysAdminDoc/YTYT-Downloader/issues)&nbsp;&nbsp;&nbsp;&nbsp;
-[<kbd> <br> &nbsp;&nbsp;⭐ Star on GitHub&nbsp;&nbsp; <br> </kbd>](https://github.com/SysAdminDoc/YTYT-Downloader)&nbsp;&nbsp;&nbsp;&nbsp;
+[<kbd> <br> &nbsp;&nbsp;🐛 Report Issues&nbsp;&nbsp; <br> </kbd>](https://github.com/SysAdminDoc/MediaDL/issues)&nbsp;&nbsp;&nbsp;&nbsp;
+[<kbd> <br> &nbsp;&nbsp;⭐ Star on GitHub&nbsp;&nbsp; <br> </kbd>](https://github.com/SysAdminDoc/MediaDL)&nbsp;&nbsp;&nbsp;&nbsp;
 [<kbd> <br> &nbsp;&nbsp;👤 SysAdminDoc&nbsp;&nbsp; <br> </kbd>](https://github.com/SysAdminDoc)
 
 <br>
