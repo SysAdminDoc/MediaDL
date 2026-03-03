@@ -45,21 +45,21 @@ $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
-$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/src/MediaDL.user.js"
+$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js"
 
 
 # Image URLs
-$script:IconUrl = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/icons/ytyticn.ico"
-$script:LogoUrl = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/ytytfull.png"
-$script:IconPngUrl = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/icons/ytyticn-128x128.png"
+$script:IconUrl = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/icons/ytyticn.ico"
+$script:LogoUrl = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/ytytfull.png"
+$script:IconPngUrl = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/icons/ytyticn-128x128.png"
 
 # Browser icon URLs
 $script:BrowserIcons = @{
-    Chrome  = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/chrome.png"
-    Firefox = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/firefox.png"
-    Edge    = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/edge.png"
-    Safari  = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/safari.png"
-    Opera   = "https://raw.githubusercontent.com/SysAdminDoc/YTYT-Downloader/refs/heads/main/images/browsers/opera.png"
+    Chrome  = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/chrome.png"
+    Firefox = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/firefox.png"
+    Edge    = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/edge.png"
+    Safari  = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/safari.png"
+    Opera   = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/opera.png"
 }
 
 # Userscript manager links by browser
