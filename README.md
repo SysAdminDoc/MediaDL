@@ -9,8 +9,6 @@
 
 <br>
 
-<img width="654" height="366" alt="MediaDL" src="https://github.com/user-attachments/assets/d5892a79-c6ff-47c6-ab63-cacfb8e78622" />
-
 <br><br>
 
 <!-- BADGES -->
@@ -45,10 +43,6 @@
 
 ---
 
-<br>
-
-
-![Screenshot](screenshot.png)
 
 ## 🚀 Quick Install
 
