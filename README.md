@@ -47,6 +47,9 @@
 
 <br>
 
+
+![Screenshot](screenshot.png)
+
 ## 🚀 Quick Install
 
 > **One command. Everything configured. No manual setup.**
