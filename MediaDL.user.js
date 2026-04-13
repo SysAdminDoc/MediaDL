@@ -2,6 +2,8 @@
 // @name         MediaDL - Universal Media Downloader
 // @namespace    https://github.com/SysAdminDoc/MediaDL
 // @version      4.0.0
+// @updateURL      https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/MediaDL.user.js
+// @downloadURL    https://raw.githubusercontent.com/SysAdminDoc/MediaDL/main/MediaDL.user.js
 // @description  Download videos and extract audio from 1800+ sites - powered by yt-dlp. Auto-scans all pages for media.
 // @author       SysAdminDoc
 // @license      MIT
