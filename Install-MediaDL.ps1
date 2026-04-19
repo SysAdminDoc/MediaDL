@@ -836,6 +836,15 @@ Download-Image -Url $script:IconUrl -OutPath $iconPath | Out-Null
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
+# codex-branding:start
+                try {
+                    $brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
+                    if (Test-Path $brandingIconPath) {
+                        $window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.Uri($brandingIconPath)))
+                    }
+                } catch {
+                }
+                # codex-branding:end
 # Set window icon
 if (Test-Path $iconPath) {
     $window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create([System.Uri]::new($iconPath))
@@ -2015,7 +2024,7 @@ function New-JsonResponse {
     $context.Response.StatusCode = $status
     $context.Response.ContentType = "application/json; charset=utf-8"
     $context.Response.Headers.Add("Access-Control-Allow-Origin", "null")
-    $context.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+    $context.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     $context.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, X-MDL-Client")
     $context.Response.ContentLength64 = $buffer.Length
     try {
@@ -2048,49 +2057,97 @@ function Start-Download {
     $referer = $params.referer
     $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?"
 
+    # Format and quality from client (with safe defaults)
+    $allowedVideoFmt = @('mp4','mkv','webm')
+    $allowedAudioFmt = @('mp3','m4a','opus','flac','wav')
+    $allowedQuality = @('best','2160','1440','1080','720','480')
+
+    $reqFormat = if ($params.format) { $params.format.ToLower() } else { $null }
+    $reqQuality = if ($params.quality) { $params.quality.ToLower() } else { 'best' }
+
+    if ($audioOnly) {
+        $format = if ($reqFormat -and $allowedAudioFmt -contains $reqFormat) { $reqFormat } else { 'mp3' }
+    } else {
+        $format = if ($reqFormat -and $allowedVideoFmt -contains $reqFormat) { $reqFormat } else { 'mp4' }
+    }
+    $quality = if ($allowedQuality -contains $reqQuality) { $reqQuality } else { 'best' }
+
+    # Output directory — use client override if provided and valid, else config default
+    $outDir = $config.DownloadPath
+    if ($params.outputDir) {
+        $reqDir = $params.outputDir.Trim()
+        # Basic path traversal guard: must be absolute, no .. components
+        if ($reqDir -match '^[A-Za-z]:\\' -and $reqDir -notmatch '\.\.' -and $reqDir.Length -le 260) {
+            if (!(Test-Path $reqDir)) {
+                try { New-Item -ItemType Directory -Path $reqDir -Force | Out-Null } catch {}
+            }
+            if (Test-Path $reqDir) { $outDir = $reqDir }
+        }
+    }
+
     $ffLoc = Split-Path $config.FfmpegPath -Parent
+
+    # Build output template
     if ($isDirect -and $title) {
         $safeName = $title -replace '[<>:"/\\|?*]', '_' -replace '_+', '_'
         $safeName = $safeName.Trim('_. ')
         if ($safeName.Length -gt 120) { $safeName = $safeName.Substring(0, 120).TrimEnd('_. ') }
-        $ext = if ($audioOnly) { "mp3" } else { "%(ext)s" }
-        $outTpl = Join-Path $config.DownloadPath "$safeName.$ext"
+        $outTpl = Join-Path $outDir "$safeName.$format"
     } else {
-        $ext = if ($audioOnly) { "mp3" } else { "%(ext)s" }
-        $outTpl = Join-Path $config.DownloadPath "%(title)s.$ext"
+        $outTpl = Join-Path $outDir "%(title)s.$format"
     }
 
-    Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly direct=$isDirect"
+    # Build quality format selector for yt-dlp
+    if ($quality -eq 'best') {
+        $fmtSel = "bestvideo+bestaudio/best"
+    } else {
+        $fmtSel = "bestvideo[height<=$quality]+bestaudio/best[height<=$quality]/best"
+    }
+
+    Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly format=$format quality=$quality dir=$outDir"
 
     if ($audioOnly -and $isDirect) {
-        $tempVideo = Join-Path $config.DownloadPath "mdl_temp_$([guid]::NewGuid().ToString('N')).mp4"
+        # Direct URL audio extraction via ffmpeg
+        $tempVideo = Join-Path $outDir "mdl_temp_$([guid]::NewGuid().ToString('N')).mp4"
         $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffmpeg, $vUrl, $tempVideo, $outMp3, $outFile, $ref)
+            param($ytdlp, $ffmpeg, $vUrl, $tempVideo, $outAudio, $outFile, $ref, $fmt)
             $dlArgs = @('--newline', '--progress', '-o', $tempVideo)
             if ($ref) { $dlArgs += '--referer'; $dlArgs += $ref }
             $dlArgs += $vUrl
             & $ytdlp @dlArgs 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
             if (Test-Path $tempVideo) {
                 "[extract] Extracting audio..." | Out-File $outFile -Append -Encoding utf8
-                & $ffmpeg -i $tempVideo -vn -acodec libmp3lame -q:a 0 -y $outMp3 2>&1 | Out-Null
-                if (Test-Path $outMp3) {
+                $ffArgs = @('-i', $tempVideo, '-vn')
+                switch ($fmt) {
+                    'mp3'  { $ffArgs += @('-acodec', 'libmp3lame', '-q:a', '0') }
+                    'm4a'  { $ffArgs += @('-acodec', 'aac', '-b:a', '256k') }
+                    'opus' { $ffArgs += @('-acodec', 'libopus', '-b:a', '192k') }
+                    'flac' { $ffArgs += @('-acodec', 'flac') }
+                    'wav'  { $ffArgs += @('-acodec', 'pcm_s16le') }
+                    default { $ffArgs += @('-acodec', 'libmp3lame', '-q:a', '0') }
+                }
+                $ffArgs += @('-y', $outAudio)
+                & $ffmpeg @ffArgs 2>&1 | Out-Null
+                if (Test-Path $outAudio) {
                     Remove-Item $tempVideo -Force -ErrorAction SilentlyContinue
                     "[download] 100% audio extraction complete" | Out-File $outFile -Append -Encoding utf8
                 }
             }
-        } -ArgumentList $config.YtDlpPath, $config.FfmpegPath, $url, $tempVideo, $outTpl, $progressFile, $referer
+        } -ArgumentList $config.YtDlpPath, $config.FfmpegPath, $url, $tempVideo, $outTpl, $progressFile, $referer, $format
     }
     elseif ($audioOnly) {
+        # Platform audio extraction via yt-dlp
         $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref)
-            $a = @('-f', 'bestaudio', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0',
+            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref, $fmt)
+            $a = @('-f', 'bestaudio', '--extract-audio', '--audio-format', $fmt, '--audio-quality', '0',
                    '--newline', '--progress', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
             if ($ref) { $a += '--referer'; $a += $ref }
             $a += $vUrl
             & $ytdlp @a 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
-        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer
+        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer, $format
     }
     elseif ($isDirect) {
+        # Direct URL video download
         $job = Start-Job -ScriptBlock {
             param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref)
             $a = @('--newline', '--progress', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
@@ -2100,22 +2157,22 @@ function Start-Download {
         } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer
     }
     else {
+        # Platform video download with quality + format selection
         $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref)
-            $a = @('-f', 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
-                   '--merge-output-format', 'mp4', '--newline', '--progress',
+            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref, $fmtSel, $mergeFormat)
+            $a = @('-f', $fmtSel, '--merge-output-format', $mergeFormat, '--newline', '--progress',
                    '--ffmpeg-location', $ffLoc, '-o', $outTpl)
             if ($ref) { $a += '--referer'; $a += $ref }
             $a += $vUrl
             & $ytdlp @a 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
-        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer
+        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer, $fmtSel, $format
     }
 
     $downloads[$id] = @{
         id = $id; url = $url; title = if ($title) { $title } else { "Unknown" }
         audioOnly = $audioOnly; status = "downloading"; progress = 0
         speed = ""; eta = ""; job = $job; progressFile = $progressFile
-        startTime = (Get-Date); filename = ""
+        startTime = (Get-Date); filename = ""; format = $format; quality = $quality
     }
 
     return $id
@@ -2224,7 +2281,7 @@ while ($listener.IsListening) {
             '^/health$' {
                 $active = ($downloads.Values | Where-Object { $_.status -eq 'downloading' -or $_.status -eq 'merging' -or $_.status -eq 'extracting' }).Count
                 $resp = @{
-                    status = "ok"; version = "1.0"; port = $PORT
+                    status = "ok"; version = "4.1.0"; port = $PORT
                     downloads = $active; token_required = $true
                 }
                 $clientId = $req.Headers["X-MDL-Client"]
@@ -2252,9 +2309,41 @@ while ($listener.IsListening) {
                 $ht = @{
                     url = $params.url; title = $params.title
                     audioOnly = $params.audioOnly; referer = $params.referer
+                    format = $params.format; quality = $params.quality
+                    outputDir = $params.outputDir
                 }
                 $id = Start-Download $ht
                 New-JsonResponse $context @{ id = $id; status = "downloading" }
+            }
+            '^/config$' {
+                if ($method -eq 'GET') {
+                    New-JsonResponse $context @{
+                        downloadPath = $config.DownloadPath
+                        videoFormats = @('mp4','mkv','webm')
+                        audioFormats = @('mp3','m4a','opus','flac','wav')
+                        qualities = @('best','2160','1440','1080','720','480')
+                    }
+                }
+                elseif ($method -eq 'PUT' -or $method -eq 'POST') {
+                    $body = Read-RequestBody $req
+                    if (-not $body) { New-JsonResponse $context @{ error = "Empty body" } 400; break }
+                    try { $cfgUpdate = $body | ConvertFrom-Json } catch { New-JsonResponse $context @{ error = "Invalid JSON" } 400; break }
+                    if ($cfgUpdate.downloadPath) {
+                        $newPath = $cfgUpdate.downloadPath.Trim()
+                        if ($newPath -match '^[A-Za-z]:\\' -and $newPath -notmatch '\.\.' -and $newPath.Length -le 260) {
+                            if (!(Test-Path $newPath)) {
+                                try { New-Item -ItemType Directory -Path $newPath -Force | Out-Null } catch {}
+                            }
+                            if (Test-Path $newPath) {
+                                $config.DownloadPath = $newPath
+                                $config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+                                Write-Log "Config updated: DownloadPath=$newPath"
+                            }
+                        }
+                    }
+                    New-JsonResponse $context @{ downloadPath = $config.DownloadPath; updated = $true }
+                }
+                else { New-JsonResponse $context @{ error = "Method not allowed" } 405 }
             }
             '^/status/(.+)$' {
                 $id = $matches[1]
