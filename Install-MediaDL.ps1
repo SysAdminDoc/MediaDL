@@ -45,45 +45,12 @@ $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
-$script:UserscriptUrl = "https://github.com/SysAdminDoc/MediaDL/raw/refs/heads/main/MediaDL.user.js"
 
 
 # Image URLs
 $script:IconUrl = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/icons/ytyticn.ico"
 $script:LogoUrl = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/ytytfull.png"
 $script:IconPngUrl = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/icons/ytyticn-128x128.png"
-
-# Browser icon URLs
-$script:BrowserIcons = @{
-    Chrome  = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/chrome.png"
-    Firefox = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/firefox.png"
-    Edge    = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/edge.png"
-    Safari  = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/safari.png"
-    Opera   = "https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/images/browsers/opera.png"
-}
-
-# Userscript manager links by browser
-$script:UserscriptManagers = @{
-    Chrome = @{
-        Tampermonkey = "https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo"
-        Violentmonkey = "https://chrome.google.com/webstore/detail/violent-monkey/jinjaccalgkegednnccohejagnlnfdag"
-    }
-    Firefox = @{
-        Tampermonkey = "https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/"
-        Greasemonkey = "https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/"
-        Violentmonkey = "https://addons.mozilla.org/firefox/addon/violentmonkey/"
-    }
-    Edge = @{
-        Tampermonkey = "https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd"
-        Violentmonkey = "https://microsoftedge.microsoft.com/addons/detail/eeagobfjdenkkddmbclomhiblgggliao"
-    }
-    Safari = @{
-        Tampermonkey = "https://apps.apple.com/us/app/tampermonkey/id6738342400"
-    }
-    Opera = @{
-        Tampermonkey = "https://addons.opera.com/en/extensions/details/tampermonkey-beta/"
-    }
-}
 
 # ============================================
 # ASSEMBLIES
@@ -592,18 +559,7 @@ Download-Image -Url $script:IconUrl -OutPath $iconPath | Out-Null
                     
                     <!-- Header Row -->
                     <StackPanel Grid.Row="0" Margin="0,0,0,16">
-                        <!-- Step Indicator -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,16">
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
-                            <TextBlock Text="1" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
-                            <Rectangle Width="60" Height="2" Fill="{StaticResource Border}" VerticalAlignment="Center" Margin="8,0"/>
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource BgCard}" Stroke="{StaticResource Border}" StrokeThickness="2"/>
-                            <TextBlock Text="2" Foreground="{StaticResource TextMuted}" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
-                            <Rectangle Width="60" Height="2" Fill="{StaticResource Border}" VerticalAlignment="Center" Margin="8,0"/>
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource BgCard}" Stroke="{StaticResource Border}" StrokeThickness="2"/>
-                            <TextBlock Text="3" Foreground="{StaticResource TextMuted}" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
-                        </StackPanel>
-                        <TextBlock Text="Step 1: Install" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Install" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center"/>
                     </StackPanel>
                     
                     <!-- Two Column Layout -->
@@ -658,127 +614,6 @@ Download-Image -Url $script:IconUrl -OutPath $iconPath | Out-Null
                         <Border x:Name="progressFill" Background="{StaticResource AccentGreen}" CornerRadius="4" HorizontalAlignment="Left" Width="0"/>
                     </Border>
                 </Grid>
-                </ScrollViewer>
-            </TabItem>
-            
-            <!-- Step 2: Install Userscript Manager -->
-            <TabItem x:Name="tabStep2">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="32,24">
-                        <!-- Step Indicator -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,32">
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
-                            <Path Data="M8,12 L11,15 L16,9" Stroke="#0a0a0a" StrokeThickness="2" Margin="-26,8,0,0"/>
-                            <Rectangle Width="60" Height="2" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="8,0"/>
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
-                            <TextBlock Text="2" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
-                            <Rectangle Width="60" Height="2" Fill="{StaticResource Border}" VerticalAlignment="Center" Margin="8,0"/>
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource BgCard}" Stroke="{StaticResource Border}" StrokeThickness="2"/>
-                            <TextBlock Text="3" Foreground="{StaticResource TextMuted}" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
-                        </StackPanel>
-                        
-                        <TextBlock Text="Step 2: Install a Userscript Manager" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
-                        <TextBlock Text="Select your browser to see compatible userscript manager extensions." FontSize="14" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,24" TextWrapping="Wrap"/>
-                        
-                        <!-- Browser Selection -->
-                        <TextBlock Text="Select Your Browser" FontSize="13" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,16"/>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,24">
-                            <Button x:Name="btnChrome" Style="{StaticResource BrowserButton}" ToolTip="Chrome / Chromium" Margin="8">
-                                <Image x:Name="imgChrome" Width="40" Height="40" Stretch="Uniform"/>
-                            </Button>
-                            <Button x:Name="btnFirefox" Style="{StaticResource BrowserButton}" ToolTip="Firefox" Margin="8">
-                                <Image x:Name="imgFirefox" Width="40" Height="40" Stretch="Uniform"/>
-                            </Button>
-                            <Button x:Name="btnEdge" Style="{StaticResource BrowserButton}" ToolTip="Microsoft Edge" Margin="8">
-                                <Image x:Name="imgEdge" Width="40" Height="40" Stretch="Uniform"/>
-                            </Button>
-                            <Button x:Name="btnSafari" Style="{StaticResource BrowserButton}" ToolTip="Safari" Margin="8">
-                                <Image x:Name="imgSafari" Width="40" Height="40" Stretch="Uniform"/>
-                            </Button>
-                            <Button x:Name="btnOpera" Style="{StaticResource BrowserButton}" ToolTip="Opera" Margin="8">
-                                <Image x:Name="imgOpera" Width="40" Height="40" Stretch="Uniform"/>
-                            </Button>
-                        </StackPanel>
-                        
-                        <!-- Selected Browser Info -->
-                        <Border x:Name="pnlBrowserLinks" Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="12" Padding="24" Visibility="Collapsed">
-                            <StackPanel>
-                                <TextBlock x:Name="txtSelectedBrowser" Text="Chrome / Chromium" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
-                                <TextBlock Text="Compatible Userscript Managers:" FontSize="13" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,12"/>
-                                <StackPanel x:Name="pnlManagerLinks">
-                                    <!-- Dynamically populated -->
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        
-                        <!-- Instructions -->
-                        <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource AccentOrange}" BorderThickness="1" CornerRadius="12" Padding="20" Margin="0,24,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="!" FontSize="20" Foreground="{StaticResource AccentOrange}" FontWeight="Bold" Margin="0,0,16,0" VerticalAlignment="Top"/>
-                                <StackPanel>
-                                    <TextBlock Text="Important" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,4"/>
-                                    <TextBlock Text="Install a userscript manager extension in your browser before proceeding to the next step. Tampermonkey is recommended for most users." FontSize="13" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-            
-            <!-- Step 3: Install Userscript -->
-            <TabItem x:Name="tabStep3">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="32,24">
-                        <!-- Step Indicator -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,32">
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
-                            <Path Data="M8,12 L11,15 L16,9" Stroke="#0a0a0a" StrokeThickness="2" Margin="-26,8,0,0"/>
-                            <Rectangle Width="60" Height="2" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="8,0"/>
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
-                            <Path Data="M8,12 L11,15 L16,9" Stroke="#0a0a0a" StrokeThickness="2" Margin="-26,8,0,0"/>
-                            <Rectangle Width="60" Height="2" Fill="{StaticResource AccentGreen}" VerticalAlignment="Center" Margin="8,0"/>
-                            <Ellipse Width="32" Height="32" Fill="{StaticResource AccentGreen}"/>
-                            <TextBlock Text="3" Foreground="#0a0a0a" FontWeight="Bold" FontSize="14" Margin="-22,7,0,0"/>
-                        </StackPanel>
-                        
-                        <TextBlock Text="Step 3: Install a Userscript" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
-                        <TextBlock Text="Install the MediaDL userscript to download videos and audio from any website." FontSize="14" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,24" TextWrapping="Wrap"/>
-                        
-                        <!-- MediaDL Userscript -->
-                        <Border HorizontalAlignment="Center" Width="320" Background="{StaticResource BgCard}" BorderBrush="{StaticResource AccentGreen}" BorderThickness="2" CornerRadius="16" Padding="24">
-                            <StackPanel HorizontalAlignment="Center">
-                                <Border Background="#22c55e" CornerRadius="40" Width="64" Height="64" Margin="0,0,0,16">
-                                    <TextBlock Text="DL" FontSize="24" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <TextBlock Text="MediaDL" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                                <TextBlock Text="Universal Media Downloader" FontSize="12" Foreground="{StaticResource AccentGreen}" HorizontalAlignment="Center" Margin="0,0,0,12"/>
-                                <TextBlock Text="Download videos and extract audio from 1800+ websites. Auto-detects media on any page with floating download pills and a background server." FontSize="12" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,16" Height="54"/>
-                                <Button x:Name="btnInstallUserscript" Content="Install MediaDL" Style="{StaticResource BaseButton}" Padding="24,12" FontSize="14"/>
-                            </StackPanel>
-                        </Border>
-                        
-                        <!-- Success Message -->
-                        <Border Background="#14532d" BorderBrush="{StaticResource AccentGreen}" BorderThickness="1" CornerRadius="12" Padding="20" Margin="0,24,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="OK" FontSize="16" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" Margin="0,0,16,0" VerticalAlignment="Top"/>
-                                <StackPanel>
-                                    <TextBlock Text="Setup Complete!" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource AccentGreen}" Margin="0,0,0,4"/>
-                                    <TextBlock Text="After installing the userscript, visit any website with video content. MediaDL auto-detects media and shows download pills. The background server handles all downloads automatically." FontSize="13" Foreground="#86efac" TextWrapping="Wrap"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        
-                        <!-- Alternate Install -->
-                        <TextBlock Text="Alternative: Manual Installation" FontSize="13" Foreground="{StaticResource TextSecondary}" Margin="0,24,0,8"/>
-                        <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="12" Padding="16">
-                            <StackPanel>
-                                <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource TextSecondary}">
-                                    <Run>If the automatic install doesn't work, you can drag the userscript file into your userscript manager:</Run>
-                                </TextBlock>
-                                <Button x:Name="btnOpenFolder" Content="Open Install Folder" Style="{StaticResource SecondaryButton}" Margin="0,12,0,0" Padding="16,10" HorizontalAlignment="Left"/>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
                 </ScrollViewer>
             </TabItem>
             
@@ -872,25 +707,6 @@ $txtStatus = $window.FindName("txtStatus")
 $statusScroll = $window.FindName("statusScroll")
 $progressFill = $window.FindName("progressFill")
 
-# Step 2 controls
-$btnChrome = $window.FindName("btnChrome")
-$btnFirefox = $window.FindName("btnFirefox")
-$btnEdge = $window.FindName("btnEdge")
-$btnSafari = $window.FindName("btnSafari")
-$btnOpera = $window.FindName("btnOpera")
-$imgChrome = $window.FindName("imgChrome")
-$imgFirefox = $window.FindName("imgFirefox")
-$imgEdge = $window.FindName("imgEdge")
-$imgSafari = $window.FindName("imgSafari")
-$imgOpera = $window.FindName("imgOpera")
-$pnlBrowserLinks = $window.FindName("pnlBrowserLinks")
-$txtSelectedBrowser = $window.FindName("txtSelectedBrowser")
-$pnlManagerLinks = $window.FindName("pnlManagerLinks")
-
-# Step 3 controls
-$btnInstallUserscript = $window.FindName("btnInstallUserscript")
-
-$btnOpenFolder = $window.FindName("btnOpenFolder")
 
 # Uninstall controls
 $imgUninstallIcon = $window.FindName("imgUninstallIcon")
@@ -913,12 +729,6 @@ if ($iconImage) {
     $imgUninstallIcon.Source = $iconImage
 }
 
-# Load browser icons
-$imgChrome.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Chrome
-$imgFirefox.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Firefox
-$imgEdge.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Edge
-$imgSafari.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Safari
-$imgOpera.Source = Get-BitmapImageFromUrl -Url $script:BrowserIcons.Opera
 
 # ============================================
 # SET DEFAULTS
@@ -990,18 +800,10 @@ function Update-WizardButtons {
         1 {
             $btnBack.Visibility = "Collapsed"
             if ($script:BaseToolsInstalled) {
-                $btnNext.Content = "Next: Userscript Manager"
+                $btnNext.Content = "Close"
             } else {
-                $btnNext.Content = "Install Base Tools"
+                $btnNext.Content = "Install"
             }
-        }
-        2 {
-            $btnBack.Visibility = "Visible"
-            $btnNext.Content = "Next: Install Userscript"
-        }
-        3 {
-            $btnBack.Visibility = "Visible"
-            $btnNext.Content = "Finish"
         }
         4 {
             $btnBack.Visibility = "Collapsed"
@@ -1010,46 +812,6 @@ function Update-WizardButtons {
     }
 }
 
-function Show-BrowserLinks {
-    param([string]$Browser)
-    
-    $pnlBrowserLinks.Visibility = "Visible"
-    $txtSelectedBrowser.Text = $Browser
-    $pnlManagerLinks.Children.Clear()
-    
-    $managers = $script:UserscriptManagers[$Browser]
-    foreach ($manager in $managers.GetEnumerator()) {
-        $linkPanel = New-Object System.Windows.Controls.StackPanel
-        $linkPanel.Orientation = "Horizontal"
-        $linkPanel.Margin = "0,8,0,0"
-        
-        $bullet = New-Object System.Windows.Controls.TextBlock
-        $bullet.Text = ">"
-        $bullet.Foreground = [System.Windows.Media.Brushes]::LimeGreen
-        $bullet.FontFamily = New-Object System.Windows.Media.FontFamily("Cascadia Code, Consolas")
-        $bullet.Margin = "0,0,8,0"
-        $bullet.VerticalAlignment = "Center"
-        
-        $link = New-Object System.Windows.Controls.TextBlock
-        $link.Cursor = [System.Windows.Input.Cursors]::Hand
-        $link.VerticalAlignment = "Center"
-        
-        $hyperlink = New-Object System.Windows.Documents.Hyperlink
-        $hyperlink.Inlines.Add($manager.Key)
-        $hyperlink.Foreground = [System.Windows.Media.Brushes]::DodgerBlue
-        $hyperlink.TextDecorations = $null
-        $url = $manager.Value
-        $hyperlink.Add_Click({ Start-Process $url }.GetNewClosure())
-        $hyperlink.Add_MouseEnter({ $this.TextDecorations = [System.Windows.TextDecorations]::Underline })
-        $hyperlink.Add_MouseLeave({ $this.TextDecorations = $null })
-        
-        $link.Inlines.Add($hyperlink)
-        
-        $linkPanel.Children.Add($bullet)
-        $linkPanel.Children.Add($link)
-        $pnlManagerLinks.Children.Add($linkPanel)
-    }
-}
 
 # ============================================
 # EVENT HANDLERS
@@ -1066,33 +828,6 @@ $btnBrowseDownload.Add_Click({
     }
 })
 
-# Browser buttons
-$btnChrome.Add_Click({ Show-BrowserLinks -Browser "Chrome" })
-
-$btnFirefox.Add_Click({ Show-BrowserLinks -Browser "Firefox" })
-$btnEdge.Add_Click({ Show-BrowserLinks -Browser "Edge" })
-$btnSafari.Add_Click({ Show-BrowserLinks -Browser "Safari" })
-$btnOpera.Add_Click({ Show-BrowserLinks -Browser "Opera" })
-
-# Install Userscript button
-$btnInstallUserscript.Add_Click({
-    Start-Process $script:UserscriptUrl
-})
-
-
-# Open folder button
-$btnOpenFolder.Add_Click({
-    if (Test-Path $script:InstallPath) {
-        $userscriptPath = Join-Path $script:InstallPath "MediaDL.user.js"
-        if (Test-Path $userscriptPath) {
-            Start-Process explorer.exe -ArgumentList "/select,`"$userscriptPath`""
-        } else {
-            Start-Process explorer.exe -ArgumentList $script:InstallPath
-        }
-    } else {
-        [System.Windows.MessageBox]::Show("Install folder not found. Please complete Step 1 first.", "MediaDL", "OK", "Warning")
-    }
-})
 
 # Back button
 $btnBack.Add_Click({
@@ -1109,7 +844,7 @@ $btnBack.Add_Click({
 # Uninstall button (show uninstall tab)
 $btnUninstall.Add_Click({
     $script:CurrentStep = 4
-    $tabWizard.SelectedIndex = 3
+    $tabWizard.SelectedIndex = 1
     Update-WizardButtons
 })
 
@@ -2510,37 +2245,23 @@ objShell.Run strCmd, 0, False
                     Update-Status ""
                     Update-Status "  Installed: yt-dlp, ffmpeg, ytdl:// protocol"
                     Update-Status "  MediaDL Server: http://127.0.0.1:9751 (auto-start on login)"
-                    Update-Status "  Install the MediaDL userscript in Tampermonkey."
-                    Update-Status "  The userscript auto-connects to the download server."
                     Update-Status "========================================"
-                    
+
                     $script:BaseToolsInstalled = $true
-                    $btnNext.Content = "Next: Userscript Manager"
-                    
+                    $btnNext.Content = "Close"
+
                 } catch {
                     Update-Status ""
                     Update-Status "[ERROR] $($_.Exception.Message)"
                     [System.Windows.MessageBox]::Show("Installation failed:`n`n$($_.Exception.Message)", "Error", "OK", "Error")
                 }
-                
+
                 $btnNext.IsEnabled = $true
                 $btnBack.IsEnabled = $true
             } else {
-                # Move to step 2
-                $script:CurrentStep = 2
-                $tabWizard.SelectedIndex = 1
-                Update-WizardButtons
+                # Install done — close window
+                $window.Close()
             }
-        }
-        2 {
-            # Move to step 3
-            $script:CurrentStep = 3
-            $tabWizard.SelectedIndex = 2
-            Update-WizardButtons
-        }
-        3 {
-            # Finish - close window
-            $window.Close()
         }
     }
 })
