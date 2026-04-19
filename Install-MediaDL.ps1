@@ -1720,6 +1720,7 @@ $ErrorActionPreference = 'Continue'
 $PORT = 9751
 $MAX_CONCURRENT = 3
 $CLEANUP_MINUTES = 5
+$SERVER_VERSION = "5.0.0"
 
 $logFile = Join-Path $PSScriptRoot "server.log"
 function Write-Log {
@@ -1734,20 +1735,73 @@ if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 1MB) {
     $lines | Set-Content $logFile -Encoding utf8
 }
 
-Write-Log "=== Server starting on port $PORT ==="
+Write-Log "=== Server v$SERVER_VERSION starting on port $PORT ==="
 
 $configPath = Join-Path $PSScriptRoot "config.json"
 if (!(Test-Path $configPath)) { Write-Log "FATAL: config.json not found"; exit 1 }
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 
+# Ensure config has all expected properties with defaults
+$configDefaults = @{
+    AudioDownloadPath = ""
+    EmbedMetadata = $true
+    EmbedThumbnail = $true
+    EmbedChapters = $true
+    EmbedSubs = $false
+    SubLangs = "en"
+    SponsorBlock = $false
+    SponsorBlockAction = "remove"
+    ConcurrentFragments = 4
+    DownloadArchive = $true
+    AutoUpdateYtDlp = $true
+    RateLimit = ""
+    Proxy = ""
+}
+foreach ($key in $configDefaults.Keys) {
+    if (-not ($config.PSObject.Properties.Name -contains $key)) {
+        $config | Add-Member -NotePropertyName $key -NotePropertyValue $configDefaults[$key] -Force
+    }
+}
+$config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
+
 $authToken = $config.ServerToken
 if (-not $authToken) {
     $authToken = [guid]::NewGuid().ToString('N')
     $config | Add-Member -NotePropertyName ServerToken -NotePropertyValue $authToken -Force
-    $config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+    $config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
 }
 
 if (!(Test-Path $config.YtDlpPath)) { Write-Log "FATAL: yt-dlp not found at $($config.YtDlpPath)"; exit 1 }
+
+# Auto-update yt-dlp on server start (background, non-blocking)
+if ($config.AutoUpdateYtDlp -eq $true) {
+    try {
+        Start-Process -FilePath $config.YtDlpPath -ArgumentList "-U" -NoNewWindow -ErrorAction SilentlyContinue
+        Write-Log "yt-dlp auto-update triggered"
+    } catch {}
+}
+
+# Download archive file (prevents re-downloading same video)
+$archivePath = Join-Path $PSScriptRoot "archive.txt"
+
+# History file (completed downloads log)
+$historyPath = Join-Path $PSScriptRoot "history.json"
+if (!(Test-Path $historyPath)) { "[]" | Set-Content $historyPath -Encoding UTF8 }
+
+function Save-HistoryEntry {
+    param([hashtable]$entry)
+    try {
+        $history = @()
+        if (Test-Path $historyPath) {
+            $raw = Get-Content $historyPath -Raw -ErrorAction SilentlyContinue
+            if ($raw) { $history = @($raw | ConvertFrom-Json) }
+        }
+        $history += [PSCustomObject]$entry
+        # Keep last 500 entries
+        if ($history.Count -gt 500) { $history = $history[-500..-1] }
+        $history | ConvertTo-Json -Depth 3 -Compress | Set-Content $historyPath -Encoding UTF8
+    } catch { Write-Log "History save error: $_" }
+}
 
 $downloads = @{}
 $nextId = 0
@@ -1808,10 +1862,11 @@ function Start-Download {
     $quality = if ($allowedQuality -contains $reqQuality) { $reqQuality } else { 'best' }
 
     # Output directory — use client override if provided and valid, else config default
+    # Use separate audio dir if configured
     $outDir = $config.DownloadPath
+    if ($audioOnly -and $config.AudioDownloadPath) { $outDir = $config.AudioDownloadPath }
     if ($params.outputDir) {
         $reqDir = $params.outputDir.Trim()
-        # Basic path traversal guard: must be absolute, no .. components
         if ($reqDir -match '^[A-Za-z]:\\' -and $reqDir -notmatch '\.\.' -and $reqDir.Length -le 260) {
             if (!(Test-Path $reqDir)) {
                 try { New-Item -ItemType Directory -Path $reqDir -Force | Out-Null } catch {}
@@ -1822,12 +1877,15 @@ function Start-Download {
 
     $ffLoc = Split-Path $config.FfmpegPath -Parent
 
-    # Build output template
+    # Build output template — playlist-aware
+    $isPlaylist = $url -match '[?&]list=' -and $url -notmatch '[?&]v='
     if ($isDirect -and $title) {
         $safeName = $title -replace '[<>:"/\\|?*]', '_' -replace '_+', '_'
         $safeName = $safeName.Trim('_. ')
         if ($safeName.Length -gt 120) { $safeName = $safeName.Substring(0, 120).TrimEnd('_. ') }
         $outTpl = Join-Path $outDir "$safeName.$format"
+    } elseif ($isPlaylist) {
+        $outTpl = Join-Path $outDir "%(playlist_title)s/%(title)s.$format"
     } else {
         $outTpl = Join-Path $outDir "%(title)s.$format"
     }
@@ -1841,13 +1899,63 @@ function Start-Download {
 
     Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly format=$format quality=$quality dir=$outDir"
 
-    # Build yt-dlp argument list based on download type.
-    # Uses Start-Process with output redirect instead of Start-Job to avoid
-    # the 1-3 second PowerShell process spawn overhead.
-    $ytdlpArgs = @('--newline', '--progress', '--no-colors', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
+    # ── Common args shared by all download types ──
+    $commonArgs = @('--newline', '--progress', '--no-colors', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
+
+    # Structured progress output (parseable without regex)
+    $commonArgs += '--progress-template'
+    $commonArgs += 'download:MDLP %(progress._percent_str)s %(progress._speed_str)s %(progress._eta_str)s'
+
+    # Concurrent fragment downloads for HLS/DASH (free speed)
+    $frags = if ($config.ConcurrentFragments -gt 0) { $config.ConcurrentFragments } else { 4 }
+    $commonArgs += '--concurrent-fragments'
+    $commonArgs += "$frags"
+
+    # Embed metadata (toggleable via config)
+    if ($config.EmbedMetadata -eq $true) { $commonArgs += '--embed-metadata' }
+    if ($config.EmbedThumbnail -eq $true) { $commonArgs += '--embed-thumbnail' }
+    if ($config.EmbedChapters -eq $true) { $commonArgs += '--embed-chapters' }
+    if ($config.EmbedSubs -eq $true) {
+        $commonArgs += '--embed-subs'
+        $commonArgs += '--write-subs'
+        $commonArgs += '--write-auto-subs'
+        $commonArgs += '--sub-langs'
+        $commonArgs += ($config.SubLangs -replace '[^a-zA-Z0-9,\-]', '')
+    }
+
+    # SponsorBlock (toggleable via config)
+    if ($config.SponsorBlock -eq $true) {
+        $action = if ($config.SponsorBlockAction -eq 'mark') { 'mark' } else { 'remove' }
+        $commonArgs += "--sponsorblock-$action"
+        $commonArgs += 'all'
+    }
+
+    # Download archive (skip already-downloaded videos)
+    if ($config.DownloadArchive -eq $true) {
+        $commonArgs += '--download-archive'
+        $commonArgs += $archivePath
+    }
+
+    # Rate limiting
+    if ($config.RateLimit -and $config.RateLimit -match '^\d+[KMG]?$') {
+        $commonArgs += '--limit-rate'
+        $commonArgs += $config.RateLimit
+    }
+
+    # Proxy
+    if ($config.Proxy -and $config.Proxy -match '^(socks[45]|https?):') {
+        $commonArgs += '--proxy'
+        $commonArgs += $config.Proxy
+    }
+
+    # Referer
+    if ($referer) { $commonArgs += '--referer'; $commonArgs += $referer }
+
+    # Playlist handling
+    if ($isPlaylist) { $commonArgs += '--yes-playlist' }
 
     if ($audioOnly -and $isDirect) {
-        # Direct URL: download first, then extract audio via a wrapper script
+        # Direct URL: download first, then extract audio via wrapper script
         $tempVideo = Join-Path $outDir "mdl_temp_$([guid]::NewGuid().ToString('N')).mp4"
         $wrapperScript = Join-Path $env:TEMP "mdl_wrap_$id.ps1"
         $codecArgs = switch ($format) {
@@ -1876,26 +1984,18 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
         $proc = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$wrapperScript`"" -NoNewWindow -PassThru
     }
     elseif ($audioOnly) {
-        # Platform audio: yt-dlp handles extraction directly
-        $ytdlpArgs = @('-f', 'bestaudio', '--extract-audio', '--audio-format', $format, '--audio-quality', '0',
-                       '--newline', '--progress', '--no-colors', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
-        if ($referer) { $ytdlpArgs += '--referer'; $ytdlpArgs += $referer }
+        $ytdlpArgs = @('-f', 'bestaudio', '--extract-audio', '--audio-format', $format, '--audio-quality', '0') + $commonArgs
         $ytdlpArgs += $url
         $proc = Start-Process -FilePath $config.YtDlpPath -ArgumentList $ytdlpArgs -NoNewWindow -PassThru `
             -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$id.txt")
     }
     elseif ($isDirect) {
-        # Direct URL video download
-        if ($referer) { $ytdlpArgs += '--referer'; $ytdlpArgs += $referer }
-        $ytdlpArgs += $url
+        $ytdlpArgs = $commonArgs + @($url)
         $proc = Start-Process -FilePath $config.YtDlpPath -ArgumentList $ytdlpArgs -NoNewWindow -PassThru `
             -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$id.txt")
     }
     else {
-        # Platform video: quality + format selection
-        $ytdlpArgs = @('-f', $fmtSel, '--merge-output-format', $format, '--newline', '--progress', '--no-colors',
-                       '--ffmpeg-location', $ffLoc, '-o', $outTpl)
-        if ($referer) { $ytdlpArgs += '--referer'; $ytdlpArgs += $referer }
+        $ytdlpArgs = @('-f', $fmtSel, '--merge-output-format', $format) + $commonArgs
         $ytdlpArgs += $url
         $proc = Start-Process -FilePath $config.YtDlpPath -ArgumentList $ytdlpArgs -NoNewWindow -PassThru `
             -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$id.txt")
@@ -1904,7 +2004,7 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
     $downloads[$id] = @{
         id = $id; url = $url; title = if ($title) { $title } else { "Unknown" }
         audioOnly = $audioOnly; status = "downloading"; progress = 0
-        speed = ""; eta = ""; process = $proc; job = $null; progressFile = $progressFile
+        speed = ""; eta = ""; process = $proc; progressFile = $progressFile
         startTime = (Get-Date); filename = ""; format = $format; quality = $quality
     }
 
@@ -1938,16 +2038,22 @@ function Update-Downloads {
         if (Test-Path $dl.progressFile) {
             $tail = Read-FileTail $dl.progressFile
             if ($tail) {
-                # Parse progress % from last occurrence in tail
-                $pctMatches = [regex]::Matches($tail, '\[download\]\s+(\d+\.?\d*)%')
-                if ($pctMatches.Count -gt 0) {
-                    $dl.progress = [double]$pctMatches[$pctMatches.Count - 1].Groups[1].Value
-                }
-                # Parse speed/ETA from the last progress line only (avoid catastrophic backtracking)
+                # Parse structured progress from --progress-template (MDLP prefix)
                 $lines = $tail -split "`n"
                 for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-                    if ($lines[$i] -match 'of\s+~?(\d+\.?\d*\w+)\s+at\s+(\S+)\s+ETA\s+(\S+)') {
-                        $dl.speed = $matches[2]; $dl.eta = $matches[3]
+                    if ($lines[$i] -match '^MDLP\s+(\d+\.?\d*)%?\s+(\S+)\s+(\S+)') {
+                        $dl.progress = [double]($matches[1] -replace '%','')
+                        $spd = $matches[2]; $eta = $matches[3]
+                        if ($spd -ne 'NA' -and $spd -ne 'Unknown') { $dl.speed = $spd }
+                        if ($eta -ne 'NA' -and $eta -ne 'Unknown') { $dl.eta = $eta }
+                        break
+                    }
+                    # Fallback: legacy yt-dlp progress format
+                    if ($lines[$i] -match '\[download\]\s+(\d+\.?\d*)%') {
+                        $dl.progress = [double]$matches[1]
+                        if ($lines[$i] -match 'at\s+(\S+)\s+ETA\s+(\S+)') {
+                            $dl.speed = $matches[1]; $dl.eta = $matches[2]
+                        }
                         break
                     }
                 }
@@ -1968,6 +2074,13 @@ function Update-Downloads {
             if ($allOutput -match "100%|has already been downloaded|Merging formats into|DelayedMuxer|audio extraction complete") {
                 $dl.status = "complete"; $dl.progress = 100
                 Write-Log "[$id] Complete"
+                # Save to download history
+                Save-HistoryEntry @{
+                    id = $dl.id; url = $dl.url; title = $dl.title
+                    filename = $dl.filename; format = $dl.format; quality = $dl.quality
+                    audioOnly = $dl.audioOnly; date = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+                    duration = [math]::Round(((Get-Date) - $dl.startTime).TotalSeconds)
+                }
             } else {
                 $dl.status = "failed"
                 $errFile = Join-Path $env:TEMP "mdl_stderr_$id.txt"
@@ -2040,7 +2153,7 @@ while ($listener.IsListening) {
             '^/health$' {
                 $active = ($downloads.Values | Where-Object { $_.status -eq 'downloading' -or $_.status -eq 'merging' -or $_.status -eq 'extracting' }).Count
                 $resp = @{
-                    status = "ok"; version = "4.1.0"; port = $PORT
+                    status = "ok"; version = $SERVER_VERSION; port = $PORT
                     downloads = $active; token_required = $true
                 }
                 $clientId = $req.Headers["X-MDL-Client"]
@@ -2078,29 +2191,63 @@ while ($listener.IsListening) {
                 if ($method -eq 'GET') {
                     New-JsonResponse $context @{
                         downloadPath = $config.DownloadPath
+                        audioDownloadPath = $config.AudioDownloadPath
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
+                        embedMetadata = $config.EmbedMetadata
+                        embedThumbnail = $config.EmbedThumbnail
+                        embedChapters = $config.EmbedChapters
+                        embedSubs = $config.EmbedSubs
+                        subLangs = $config.SubLangs
+                        sponsorBlock = $config.SponsorBlock
+                        sponsorBlockAction = $config.SponsorBlockAction
+                        concurrentFragments = $config.ConcurrentFragments
+                        downloadArchive = $config.DownloadArchive
+                        autoUpdateYtDlp = $config.AutoUpdateYtDlp
+                        rateLimit = $config.RateLimit
+                        proxy = $config.Proxy
                     }
                 }
                 elseif ($method -eq 'PUT' -or $method -eq 'POST') {
                     $body = Read-RequestBody $req
                     if (-not $body) { New-JsonResponse $context @{ error = "Empty body" } 400; break }
                     try { $cfgUpdate = $body | ConvertFrom-Json } catch { New-JsonResponse $context @{ error = "Invalid JSON" } 400; break }
-                    if ($cfgUpdate.downloadPath) {
-                        $newPath = $cfgUpdate.downloadPath.Trim()
-                        if ($newPath -match '^[A-Za-z]:\\' -and $newPath -notmatch '\.\.' -and $newPath.Length -le 260) {
-                            if (!(Test-Path $newPath)) {
-                                try { New-Item -ItemType Directory -Path $newPath -Force | Out-Null } catch {}
-                            }
-                            if (Test-Path $newPath) {
-                                $config.DownloadPath = $newPath
-                                $config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
-                                Write-Log "Config updated: DownloadPath=$newPath"
+                    # Update path fields with validation
+                    foreach ($pathKey in @('downloadPath','audioDownloadPath')) {
+                        $propName = if ($pathKey -eq 'downloadPath') { 'DownloadPath' } else { 'AudioDownloadPath' }
+                        if ($cfgUpdate.PSObject.Properties.Name -contains $pathKey) {
+                            $newPath = "$($cfgUpdate.$pathKey)".Trim()
+                            if ($newPath -eq '') { $config.$propName = ''; continue }
+                            if ($newPath -match '^[A-Za-z]:\\' -and $newPath -notmatch '\.\.' -and $newPath.Length -le 260) {
+                                if (!(Test-Path $newPath)) {
+                                    try { New-Item -ItemType Directory -Path $newPath -Force | Out-Null } catch {}
+                                }
+                                if (Test-Path $newPath) { $config.$propName = $newPath }
                             }
                         }
                     }
-                    New-JsonResponse $context @{ downloadPath = $config.DownloadPath; updated = $true }
+                    # Update boolean/string fields
+                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','EmbedSubs','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
+                    foreach ($f in $boolFields) {
+                        $camel = $f.Substring(0,1).ToLower() + $f.Substring(1)
+                        if ($cfgUpdate.PSObject.Properties.Name -contains $camel) {
+                            $config.$f = [bool]$cfgUpdate.$camel
+                        }
+                    }
+                    $strFields = @{SubLangs='subLangs';SponsorBlockAction='sponsorBlockAction';RateLimit='rateLimit';Proxy='proxy'}
+                    foreach ($pair in $strFields.GetEnumerator()) {
+                        if ($cfgUpdate.PSObject.Properties.Name -contains $pair.Value) {
+                            $config.($pair.Key) = "$($cfgUpdate.($pair.Value))"
+                        }
+                    }
+                    if ($cfgUpdate.PSObject.Properties.Name -contains 'concurrentFragments') {
+                        $v = [int]$cfgUpdate.concurrentFragments
+                        if ($v -ge 1 -and $v -le 32) { $config.ConcurrentFragments = $v }
+                    }
+                    $config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
+                    Write-Log "Config updated"
+                    New-JsonResponse $context @{ updated = $true }
                 }
                 else { New-JsonResponse $context @{ error = "Method not allowed" } 405 }
             }
@@ -2124,6 +2271,19 @@ while ($listener.IsListening) {
                     }
                 }
                 New-JsonResponse $context @{ downloads = $list; count = $list.Count }
+            }
+            '^/history$' {
+                $history = @()
+                if (Test-Path $historyPath) {
+                    try { $history = @(Get-Content $historyPath -Raw | ConvertFrom-Json) } catch {}
+                }
+                # Support ?limit=N query param
+                $limitParam = $req.QueryString["limit"]
+                if ($limitParam -and $limitParam -match '^\d+$') {
+                    $n = [int]$limitParam
+                    if ($history.Count -gt $n) { $history = $history[-$n..-1] }
+                }
+                New-JsonResponse $context @{ history = $history; count = $history.Count }
             }
             '^/cancel/(.+)$' {
                 if ($method -ne 'DELETE') { New-JsonResponse $context @{ error = "Method not allowed" } 405; break }
