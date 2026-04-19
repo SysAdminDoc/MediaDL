@@ -1841,110 +1841,128 @@ function Start-Download {
 
     Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly format=$format quality=$quality dir=$outDir"
 
+    # Build yt-dlp argument list based on download type.
+    # Uses Start-Process with output redirect instead of Start-Job to avoid
+    # the 1-3 second PowerShell process spawn overhead.
+    $ytdlpArgs = @('--newline', '--progress', '--no-colors', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
+
     if ($audioOnly -and $isDirect) {
-        # Direct URL audio extraction via ffmpeg
+        # Direct URL: download first, then extract audio via a wrapper script
         $tempVideo = Join-Path $outDir "mdl_temp_$([guid]::NewGuid().ToString('N')).mp4"
-        $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffmpeg, $vUrl, $tempVideo, $outAudio, $outFile, $ref, $fmt)
-            $dlArgs = @('--newline', '--progress', '-o', $tempVideo)
-            if ($ref) { $dlArgs += '--referer'; $dlArgs += $ref }
-            $dlArgs += $vUrl
-            & $ytdlp @dlArgs 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
-            if (Test-Path $tempVideo) {
-                "[extract] Extracting audio..." | Out-File $outFile -Append -Encoding utf8
-                $ffArgs = @('-i', $tempVideo, '-vn')
-                switch ($fmt) {
-                    'mp3'  { $ffArgs += @('-acodec', 'libmp3lame', '-q:a', '0') }
-                    'm4a'  { $ffArgs += @('-acodec', 'aac', '-b:a', '256k') }
-                    'opus' { $ffArgs += @('-acodec', 'libopus', '-b:a', '192k') }
-                    'flac' { $ffArgs += @('-acodec', 'flac') }
-                    'wav'  { $ffArgs += @('-acodec', 'pcm_s16le') }
-                    default { $ffArgs += @('-acodec', 'libmp3lame', '-q:a', '0') }
-                }
-                $ffArgs += @('-y', $outAudio)
-                & $ffmpeg @ffArgs 2>&1 | Out-Null
-                if (Test-Path $outAudio) {
-                    Remove-Item $tempVideo -Force -ErrorAction SilentlyContinue
-                    "[download] 100% audio extraction complete" | Out-File $outFile -Append -Encoding utf8
-                }
-            }
-        } -ArgumentList $config.YtDlpPath, $config.FfmpegPath, $url, $tempVideo, $outTpl, $progressFile, $referer, $format
+        $wrapperScript = Join-Path $env:TEMP "mdl_wrap_$id.ps1"
+        $codecArgs = switch ($format) {
+            'mp3'  { '-acodec libmp3lame -q:a 0' }
+            'm4a'  { '-acodec aac -b:a 256k' }
+            'opus' { '-acodec libopus -b:a 192k' }
+            'flac' { '-acodec flac' }
+            'wav'  { '-acodec pcm_s16le' }
+            default { '-acodec libmp3lame -q:a 0' }
+        }
+        $wrapperContent = @"
+`$dlArgs = @('--newline', '--progress', '--no-colors', '-o', '$($tempVideo -replace "'","''")')
+$(if ($referer) { "`$dlArgs += '--referer'; `$dlArgs += '$($referer -replace "'","''")'" })
+`$dlArgs += '$($url -replace "'","''")'
+& '$($config.YtDlpPath -replace "'","''")' @dlArgs 2>&1 | ForEach-Object { `$_ | Out-File '$($progressFile -replace "'","''")' -Append -Encoding utf8 }
+if (Test-Path '$($tempVideo -replace "'","''")') {
+    '[extract] Extracting audio...' | Out-File '$($progressFile -replace "'","''")' -Append -Encoding utf8
+    & '$($config.FfmpegPath -replace "'","''")' -i '$($tempVideo -replace "'","''")' -vn $codecArgs -y '$($outTpl -replace "'","''")' 2>&1 | Out-Null
+    if (Test-Path '$($outTpl -replace "'","''")') {
+        Remove-Item '$($tempVideo -replace "'","''")' -Force -ErrorAction SilentlyContinue
+        '[download] 100% audio extraction complete' | Out-File '$($progressFile -replace "'","''")' -Append -Encoding utf8
+    }
+}
+"@
+        $wrapperContent | Set-Content $wrapperScript -Encoding UTF8
+        $proc = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$wrapperScript`"" -NoNewWindow -PassThru
     }
     elseif ($audioOnly) {
-        # Platform audio extraction via yt-dlp
-        $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref, $fmt)
-            $a = @('-f', 'bestaudio', '--extract-audio', '--audio-format', $fmt, '--audio-quality', '0',
-                   '--newline', '--progress', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
-            if ($ref) { $a += '--referer'; $a += $ref }
-            $a += $vUrl
-            & $ytdlp @a 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
-        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer, $format
+        # Platform audio: yt-dlp handles extraction directly
+        $ytdlpArgs = @('-f', 'bestaudio', '--extract-audio', '--audio-format', $format, '--audio-quality', '0',
+                       '--newline', '--progress', '--no-colors', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
+        if ($referer) { $ytdlpArgs += '--referer'; $ytdlpArgs += $referer }
+        $ytdlpArgs += $url
+        $proc = Start-Process -FilePath $config.YtDlpPath -ArgumentList $ytdlpArgs -NoNewWindow -PassThru `
+            -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$id.txt")
     }
     elseif ($isDirect) {
         # Direct URL video download
-        $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref)
-            $a = @('--newline', '--progress', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
-            if ($ref) { $a += '--referer'; $a += $ref }
-            $a += $vUrl
-            & $ytdlp @a 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
-        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer
+        if ($referer) { $ytdlpArgs += '--referer'; $ytdlpArgs += $referer }
+        $ytdlpArgs += $url
+        $proc = Start-Process -FilePath $config.YtDlpPath -ArgumentList $ytdlpArgs -NoNewWindow -PassThru `
+            -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$id.txt")
     }
     else {
-        # Platform video download with quality + format selection
-        $job = Start-Job -ScriptBlock {
-            param($ytdlp, $ffLoc, $outTpl, $vUrl, $outFile, $ref, $fmtSel, $mergeFormat)
-            $a = @('-f', $fmtSel, '--merge-output-format', $mergeFormat, '--newline', '--progress',
-                   '--ffmpeg-location', $ffLoc, '-o', $outTpl)
-            if ($ref) { $a += '--referer'; $a += $ref }
-            $a += $vUrl
-            & $ytdlp @a 2>&1 | ForEach-Object { $_ | Out-File $outFile -Append -Encoding utf8 }
-        } -ArgumentList $config.YtDlpPath, $ffLoc, $outTpl, $url, $progressFile, $referer, $fmtSel, $format
+        # Platform video: quality + format selection
+        $ytdlpArgs = @('-f', $fmtSel, '--merge-output-format', $format, '--newline', '--progress', '--no-colors',
+                       '--ffmpeg-location', $ffLoc, '-o', $outTpl)
+        if ($referer) { $ytdlpArgs += '--referer'; $ytdlpArgs += $referer }
+        $ytdlpArgs += $url
+        $proc = Start-Process -FilePath $config.YtDlpPath -ArgumentList $ytdlpArgs -NoNewWindow -PassThru `
+            -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$id.txt")
     }
 
     $downloads[$id] = @{
         id = $id; url = $url; title = if ($title) { $title } else { "Unknown" }
         audioOnly = $audioOnly; status = "downloading"; progress = 0
-        speed = ""; eta = ""; job = $job; progressFile = $progressFile
+        speed = ""; eta = ""; process = $proc; job = $null; progressFile = $progressFile
         startTime = (Get-Date); filename = ""; format = $format; quality = $quality
     }
 
     return $id
 }
 
+# Read only the last 4KB of a file for progress parsing (avoids reading
+# multi-megabyte yt-dlp output files that grow over time).
+function Read-FileTail {
+    param([string]$Path, [int]$Bytes = 4096)
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $len = $fs.Length
+            if ($len -eq 0) { return "" }
+            $start = [Math]::Max(0, $len - $Bytes)
+            $fs.Seek($start, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $buf = New-Object byte[] ([Math]::Min($Bytes, $len))
+            $read = $fs.Read($buf, 0, $buf.Length)
+            return [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+        } finally { $fs.Close() }
+    } catch { return "" }
+}
+
 function Update-Downloads {
     foreach ($id in @($downloads.Keys)) {
         $dl = $downloads[$id]
         if ($dl.status -eq 'complete' -or $dl.status -eq 'failed' -or $dl.status -eq 'cancelled') { continue }
-        if (-not $dl.job) { continue }
+        if (-not $dl.process) { continue }
 
         if (Test-Path $dl.progressFile) {
-            try {
-                $content = Get-Content $dl.progressFile -Raw -ErrorAction SilentlyContinue
-                if ($content) {
-                    $pctMatches = [regex]::Matches($content, '\[download\]\s+(\d+\.?\d*)%')
-                    if ($pctMatches.Count -gt 0) {
-                        $dl.progress = [double]$pctMatches[$pctMatches.Count - 1].Groups[1].Value
-                    }
-                    if ($content -match '(?s).*of\s+~?(\d+\.?\d*\w+)\s+at\s+(\S+)\s+ETA\s+(\S+)') {
-                        $dl.speed = $matches[2]; $dl.eta = $matches[3]
-                    }
-                    if ($content -match '\[Merger\]|Merging formats') { $dl.status = "merging" }
-                    elseif ($content -match '\[ExtractAudio\]|\[extract\]') { $dl.status = "extracting" }
-                    elseif ($content -match 'already been downloaded') { $dl.progress = 100; $dl.status = "complete" }
-                    if ($content -match '\[download\] Destination: (.+)') { $dl.filename = $matches[1] }
-                    elseif ($content -match '\[Merger\] Merging formats into "(.+)"') { $dl.filename = $matches[1] }
+            $tail = Read-FileTail $dl.progressFile
+            if ($tail) {
+                # Parse progress % from last occurrence in tail
+                $pctMatches = [regex]::Matches($tail, '\[download\]\s+(\d+\.?\d*)%')
+                if ($pctMatches.Count -gt 0) {
+                    $dl.progress = [double]$pctMatches[$pctMatches.Count - 1].Groups[1].Value
                 }
-            } catch {}
+                # Parse speed/ETA from the last progress line only (avoid catastrophic backtracking)
+                $lines = $tail -split "`n"
+                for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+                    if ($lines[$i] -match 'of\s+~?(\d+\.?\d*\w+)\s+at\s+(\S+)\s+ETA\s+(\S+)') {
+                        $dl.speed = $matches[2]; $dl.eta = $matches[3]
+                        break
+                    }
+                }
+                if ($tail -match '\[Merger\]|Merging formats') { $dl.status = "merging" }
+                elseif ($tail -match '\[ExtractAudio\]|\[extract\]') { $dl.status = "extracting" }
+                elseif ($tail -match 'already been downloaded') { $dl.progress = 100; $dl.status = "complete" }
+                if ($tail -match '\[Merger\] Merging formats into "(.+)"') { $dl.filename = $matches[1] }
+                elseif ($tail -match '\[download\] Destination: (.+)') { $dl.filename = $matches[1] }
+            }
         }
 
-        if ($dl.job.State -ne "Running") {
-            $output = ""
-            try { $output = Receive-Job -Job $dl.job -ErrorAction SilentlyContinue | Out-String } catch {}
-            $allOutput = $output
+        if ($dl.process.HasExited) {
+            $allOutput = ""
             if (Test-Path $dl.progressFile) {
-                try { $allOutput += Get-Content $dl.progressFile -Raw -ErrorAction SilentlyContinue } catch {}
+                $allOutput = Read-FileTail $dl.progressFile 8192
             }
 
             if ($allOutput -match "100%|has already been downloaded|Merging formats into|DelayedMuxer|audio extraction complete") {
@@ -1952,11 +1970,17 @@ function Update-Downloads {
                 Write-Log "[$id] Complete"
             } else {
                 $dl.status = "failed"
-                Write-Log "[$id] Failed: $($allOutput.Substring(0, [Math]::Min(200, $allOutput.Length)))"
+                $errFile = Join-Path $env:TEMP "mdl_stderr_$id.txt"
+                $errMsg = if (Test-Path $errFile) { (Read-FileTail $errFile 2048) } else { "" }
+                Write-Log "[$id] Failed: $($allOutput.Substring(0, [Math]::Min(200, $allOutput.Length))) $errMsg"
             }
 
-            try { Remove-Job -Job $dl.job -Force -ErrorAction SilentlyContinue } catch {}
+            # Cleanup temp files
             if (Test-Path $dl.progressFile) { Remove-Item $dl.progressFile -Force -ErrorAction SilentlyContinue }
+            $errFile = Join-Path $env:TEMP "mdl_stderr_$id.txt"
+            if (Test-Path $errFile) { Remove-Item $errFile -Force -ErrorAction SilentlyContinue }
+            $wrapFile = Join-Path $env:TEMP "mdl_wrap_$id.ps1"
+            if (Test-Path $wrapFile) { Remove-Item $wrapFile -Force -ErrorAction SilentlyContinue }
         }
     }
 }
@@ -1984,7 +2008,7 @@ $lastCleanup = Get-Date
 while ($listener.IsListening) {
     try {
         $result = $listener.BeginGetContext($null, $null)
-        while (-not $result.AsyncWaitHandle.WaitOne(2000)) {
+        while (-not $result.AsyncWaitHandle.WaitOne(500)) {
             Update-Downloads
             if ((Get-Date) -gt $lastCleanup.AddMinutes(1)) {
                 Clean-OldDownloads
@@ -2082,6 +2106,7 @@ while ($listener.IsListening) {
             }
             '^/status/(.+)$' {
                 $id = $matches[1]
+                Update-Downloads
                 if ($downloads.ContainsKey($id)) {
                     $dl = $downloads[$id]
                     New-JsonResponse $context @{
@@ -2105,8 +2130,8 @@ while ($listener.IsListening) {
                 $id = $matches[1]
                 if ($downloads.ContainsKey($id)) {
                     $dl = $downloads[$id]
-                    if ($dl.job) {
-                        try { Stop-Job -Job $dl.job -ErrorAction SilentlyContinue; Remove-Job -Job $dl.job -Force -ErrorAction SilentlyContinue } catch {}
+                    if ($dl.process -and -not $dl.process.HasExited) {
+                        try { $dl.process.Kill() } catch {}
                     }
                     $dl.status = "cancelled"
                     if (Test-Path $dl.progressFile) { Remove-Item $dl.progressFile -Force -ErrorAction SilentlyContinue }
@@ -2128,8 +2153,8 @@ while ($listener.IsListening) {
 }
 
 foreach ($dl in $downloads.Values) {
-    if ($dl.job) {
-        try { Stop-Job -Job $dl.job -ErrorAction SilentlyContinue; Remove-Job -Job $dl.job -Force } catch {}
+    if ($dl.process -and -not $dl.process.HasExited) {
+        try { $dl.process.Kill() } catch {}
     }
     if ($dl.progressFile -and (Test-Path $dl.progressFile)) {
         Remove-Item $dl.progressFile -Force -ErrorAction SilentlyContinue
