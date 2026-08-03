@@ -58,7 +58,7 @@ irm https://raw.githubusercontent.com/SysAdminDoc/MediaDL/refs/heads/main/Instal
 
 ## 🌍 Supported Sites
 
-MediaDL has optimized detection for these platforms, plus **generic `<video>` detection** for any site yt-dlp supports:
+MediaDL has optimized detection for these platforms, including Instagram Reels, Stories, and Highlights, plus **generic `<video>` detection** for any site yt-dlp supports:
 
 <div align="center">
 

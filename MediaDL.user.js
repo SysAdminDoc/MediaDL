@@ -712,6 +712,12 @@
     function extractPlatformUrl(video) {
         const host = location.hostname.replace('www.', '');
 
+        // Instagram Stories, Highlights, Reels, and posts often expose the
+        // playable URL only in embedded JSON while the element uses blob:.
+        if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+            return extractInstagramUrl(video);
+        }
+
         // Facebook - multi-strategy extraction
         if (host === 'facebook.com' || host === 'fb.com' || host.endsWith('.facebook.com')) {
             return extractFacebookUrl(video);
@@ -741,6 +747,90 @@
         if (src.startsWith('blob:')) return location.href;
 
         return null;
+    }
+
+    // =========================================================================
+    // INSTAGRAM EXTRACTION
+    // Handles video elements, embedded story JSON, and route fallbacks.
+    // =========================================================================
+    function extractInstagramUrl(video) {
+        const directCandidates = [
+            video.currentSrc,
+            video.src,
+            video.getAttribute('data-src'),
+            video.getAttribute('data-video-url')
+        ];
+        const source = video.querySelector('source[src]');
+        if (source) directCandidates.push(source.src || source.getAttribute('src'));
+
+        const direct = directCandidates.find(url => url && !url.startsWith('blob:') && isInstagramVideoUrl(url));
+        if (direct) {
+            console.log('MediaDL [IG]: Direct video URL found');
+            return direct;
+        }
+
+        const embedded = extractInstagramJsonUrl();
+        if (embedded) {
+            console.log('MediaDL [IG]: Embedded story/reel video URL found');
+            return embedded;
+        }
+
+        if (/\/(?:stories|highlights|reel|reels|p)\//i.test(location.pathname)) {
+            console.log('MediaDL [IG]: Using story/highlight/reel page URL');
+            return location.href;
+        }
+        return location.href;
+    }
+
+    function extractInstagramJsonUrl() {
+        const candidates = [];
+        const scripts = document.querySelectorAll('script[type="application/json"], script:not([src])');
+        for (const script of scripts) {
+            const raw = script.textContent || '';
+            if (raw.length < 20 || !/(video_versions|video_url|playback_url|video_resources|story|highlight)/i.test(raw)) {
+                continue;
+            }
+            const text = raw
+                .replace(/\\"/g, '"')
+                .replace(/\\\//g, '/')
+                .replace(/\\u0025/gi, '%')
+                .replace(/\\u0026/gi, '&')
+                .replace(/\\u003d/gi, '=')
+                .replace(/\\u002f/gi, '/');
+
+            const keyed = /"(?:video_url|playback_url|contentUrl|video_versions|video_resources)"\s*:\s*"([^"]+)"/gi;
+            let match;
+            while ((match = keyed.exec(text))) candidates.push(match[1]);
+
+            const urls = /https?:\/\/[^"'\\\s]+/gi;
+            while ((match = urls.exec(text))) candidates.push(match[0]);
+        }
+
+        return candidates
+            .map(url => normalizeInstagramUrl(url))
+            .find(url => isInstagramVideoUrl(url)) || null;
+    }
+
+    function normalizeInstagramUrl(rawUrl) {
+        return String(rawUrl || '')
+            .replace(/\\"/g, '"')
+            .replace(/\\\//g, '/')
+            .replace(/\\u0025/gi, '%')
+            .replace(/\\u0026/gi, '&')
+            .replace(/\\u003d/gi, '=')
+            .replace(/\\u002f/gi, '/')
+            .replace(/&amp;/g, '&');
+    }
+
+    function isInstagramVideoUrl(url) {
+        try {
+            const parsed = new URL(url, location.href);
+            if (!/^https?:$/i.test(parsed.protocol)) return false;
+            if (!/(cdninstagram\.com|fbcdn\.net)$/i.test(parsed.hostname)) return false;
+            if (/\.(?:jpg|jpeg|png|gif|webp|svg)(?:[?#]|$)/i.test(parsed.pathname)) return false;
+            return /\.(?:mp4|m3u8)$/i.test(parsed.pathname) ||
+                /(?:\/v\/|video|bytestart=|_nc_cat=|oe=)/i.test(parsed.href);
+        } catch { return false; }
     }
 
     // =========================================================================
