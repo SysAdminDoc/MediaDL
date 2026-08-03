@@ -187,6 +187,8 @@ Self-update throttled to once per 24 hours via timestamp file.
 
 The `extension/` directory contains unsigned MV3 packages for Chrome and Firefox, plus an Edge package with a native side-panel queue viewer. Run `node extension/build.mjs` after changing `MediaDL.user.js` to regenerate the shared content/background adapters. Firefox AMO submission/signing is intentionally not performed; load the unsigned package as a development extension.
 
+`MediaDL.mobile.user.js` is the lightweight Kiwi Browser/Orion variant. It contains no Windows paths, local protocol, or PowerShell assumptions and downloads direct MP4/audio URLs; page-managed blobs and HLS playlists are reported as desktop-only limitations.
+
 <br>
 
 ## 📸 Screenshots

@@ -22,6 +22,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Optional SRT subtitle downloads with automatic-caption support and MKV subtitle muxing.
 - Added: Opt-in NVENC/QSV hardware transcode pass with safe no-op behavior when the encoder or container is unsupported.
 - Added: Unsigned MV3 Chrome and Firefox extension variants generated from the userscript, plus an Edge side-panel queue viewer.
+- Added: Mobile Kiwi Browser/Orion userscript with direct-media downloads and explicit blob/HLS desktop-only messaging.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
