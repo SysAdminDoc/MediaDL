@@ -85,6 +85,7 @@ $configDefaults = @{
     DownloadArchive = $true
     AutoUpdateYtDlp = $true
     NamedPipeName = 'MediaDL'
+    ToastNotifications = $true
     RateLimit = ""
     Proxy = ""
     StartMinimized = $false
@@ -482,6 +483,7 @@ $xamlString = @"
                         <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,0,0,16">
                             <StackPanel>
                                 <CheckBox x:Name="cfgAutoUpdate" Content="Auto-update yt-dlp on server start"/>
+                                <CheckBox x:Name="cfgToastNotifications" Content="Show Windows toast on completion"/>
                                 <CheckBox x:Name="cfgArchive" Content="Skip already-downloaded videos (archive.txt)"/>
                                 <CheckBox x:Name="cfgCloseToTray" Content="Close to system tray instead of quitting"/>
                                 <CheckBox x:Name="cfgStartMinimized" Content="Start minimized to tray"/>
@@ -554,6 +556,7 @@ $cfgBandwidth = $window.FindName("cfgBandwidth")
 $cfgSiteConcurrency = $window.FindName("cfgSiteConcurrency")
 $cfgProxy = $window.FindName("cfgProxy")
 $cfgAutoUpdate = $window.FindName("cfgAutoUpdate")
+$cfgToastNotifications = $window.FindName("cfgToastNotifications")
 $cfgArchive = $window.FindName("cfgArchive")
 $cfgCloseToTray = $window.FindName("cfgCloseToTray")
 $cfgStartMinimized = $window.FindName("cfgStartMinimized")
@@ -586,6 +589,7 @@ function Load-SettingsUI {
     $cfgSiteConcurrency.Value = [double]$c.SiteConcurrencyCap
     $cfgProxy.Text = "$($c.Proxy)"
     $cfgAutoUpdate.IsChecked = $c.AutoUpdateYtDlp -eq $true
+    $cfgToastNotifications.IsChecked = $c.ToastNotifications -ne $false
     $cfgArchive.IsChecked = $c.DownloadArchive -eq $true
     $cfgCloseToTray.IsChecked = $c.CloseToTray -eq $true
     $cfgStartMinimized.IsChecked = $c.StartMinimized -eq $true
@@ -1179,6 +1183,24 @@ namespace MediaDL {
             }
         }
 
+        function Send-CompletionToast {
+            param($Download)
+            if ($config.ToastNotifications -ne $true) { return }
+            try {
+                [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+                [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+                $title = [System.Security.SecurityElement]::Escape(([string]$Download.title))
+                $detail = if ($Download.filename) { "Saved: $($Download.filename)" } else { 'Download complete' }
+                $detail = [System.Security.SecurityElement]::Escape([string]$detail)
+                $xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+                $xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$title</text><text>$detail</text></binding></visual></toast>")
+                $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+                [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('MediaDL').Show($toast)
+            } catch {
+                Write-SLog "[$($Download.id)] Windows toast unavailable: $($_.Exception.Message)"
+            }
+        }
+
         function Get-MusicBrainzTags {
             param([string]$Title)
             if (-not $Title) { return $null }
@@ -1443,6 +1465,7 @@ namespace MediaDL {
                         $dl.status = "post-processing"; Save-QueueRecord $dl
                         try { [void](Invoke-HardwareTranscode $dl) } catch { Write-SLog "[$id] Hardware transcode error: $($_.Exception.Message)" }
                         try { Invoke-PostProcess $dl } catch { Write-SLog "[$id] Post-processing error: $($_.Exception.Message)" }
+                        try { Send-CompletionToast $dl } catch { Write-SLog "[$id] Completion toast error: $($_.Exception.Message)" }
                         $dl.status = "complete"; $dl.progress = 100; $state.TotalCompleted++
                         Write-SLog "[$id] Complete"
                         Save-HistoryEntry @{ id=$dl.id; url=$dl.url; title=$dl.title; filename=$dl.filename; format=$dl.format; quality=$dl.quality; audioOnly=$dl.audioOnly; date=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); duration=[math]::Round(((Get-Date)-$dl.startTime).TotalSeconds) }
@@ -1775,7 +1798,7 @@ button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
                     }
                     '^/config$' {
                         if ($method -eq 'GET') {
-                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;musicFolder=$config.MusicFolder;postProcessAudio=$config.PostProcessAudio;postProcessMusicBrainz=$config.PostProcessMusicBrainz;sitePresets=$config.SitePresets;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subtitleSrt=$config.SubtitleSrt;hardwareEncoder=$config.HardwareEncoder;namedPipeName=$config.NamedPipeName;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
+                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;musicFolder=$config.MusicFolder;postProcessAudio=$config.PostProcessAudio;postProcessMusicBrainz=$config.PostProcessMusicBrainz;sitePresets=$config.SitePresets;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subtitleSrt=$config.SubtitleSrt;hardwareEncoder=$config.HardwareEncoder;namedPipeName=$config.NamedPipeName;toastNotifications=$config.ToastNotifications;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
                         } else { Send-Json $ctx @{error="Use GUI settings"} 405 }
                     }
                     '^/pause/(.+)$' {
@@ -1945,6 +1968,7 @@ $btnSaveSettings.Add_Click({
     $script:Config.SiteConcurrencyCap = [int][Math]::Max(1, [Math]::Min(8, $cfgSiteConcurrency.Value))
     $script:Config.Proxy = $cfgProxy.Text
     $script:Config.AutoUpdateYtDlp = $cfgAutoUpdate.IsChecked
+    $script:Config.ToastNotifications = $cfgToastNotifications.IsChecked
     $script:Config.DownloadArchive = $cfgArchive.IsChecked
     $script:Config.CloseToTray = $cfgCloseToTray.IsChecked
     $script:Config.StartMinimized = $cfgStartMinimized.IsChecked

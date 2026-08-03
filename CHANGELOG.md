@@ -24,6 +24,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Unsigned MV3 Chrome and Firefox extension variants generated from the userscript, plus an Edge side-panel queue viewer.
 - Added: Mobile Kiwi Browser/Orion userscript with direct-media downloads and explicit blob/HLS desktop-only messaging.
 - Added: Authenticated newline-delimited JSON named-pipe transport alongside the localhost HTTP server.
+- Added: Opt-in native Windows completion toasts from the background server with fail-safe WinRT handling.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

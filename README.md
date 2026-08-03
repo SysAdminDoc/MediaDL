@@ -110,6 +110,7 @@ Queue requests and interrupted states persist in a SQLite WAL journal at `%LOCAL
 The settings panel also exposes a bandwidth slider and per-site concurrency cap to keep busy hosts fair.
 Open `http://127.0.0.1:9751/ui` for the local queue viewer, where drag handles persist priority order and active downloads can be paused, resumed, or cancelled.
 Optional post-processing extracts MP3 audio, looks up MusicBrainz tags, and moves the result into the configured Music folder.
+The server can also show an opt-in native Windows toast after each download completes.
 
 #### 🔑 Zero-Config Auth
 Server token negotiated automatically via `X-MDL-Client` header handshake. No manual setup.
@@ -175,6 +176,8 @@ DWM rounded corners via `DwmSetWindowAttribute`. Degrades gracefully on Windows 
 
 #### 🔄 yt-dlp Auto-Update
 Self-update throttled to once per 24 hours via timestamp file.
+
+Completion toasts are opt-in and fail safely when WinRT toast registration is unavailable.
 
 #### 🛑 Crash-Proof
 4-layer exception handling: closing flag, nuclear try/catch, control guards, and global `Application.ThreadException`.

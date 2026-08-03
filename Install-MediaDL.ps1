@@ -1035,6 +1035,7 @@ $btnNext.Add_Click({
                         SubtitleSrt = $false
                         HardwareEncoder = 'none'
                         NamedPipeName = 'MediaDL'
+                        ToastNotifications = $true
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1942,6 +1943,7 @@ $configDefaults = @{
     SubtitleSrt = $false
     HardwareEncoder = 'none'
     NamedPipeName = 'MediaDL'
+    ToastNotifications = $true
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -2055,6 +2057,24 @@ function Invoke-HardwareTranscode {
         if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
         Write-Log "[$($Download.id)] Hardware transcode error: $($_.Exception.Message)"
         return $false
+    }
+}
+
+function Send-CompletionToast {
+    param($Download)
+    if ($config.ToastNotifications -ne $true) { return }
+    try {
+        [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+        $title = [System.Security.SecurityElement]::Escape(([string]$Download.title))
+        $detail = if ($Download.filename) { "Saved: $($Download.filename)" } else { 'Download complete' }
+        $detail = [System.Security.SecurityElement]::Escape([string]$detail)
+        $xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+        $xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$title</text><text>$detail</text></binding></visual></toast>")
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('MediaDL').Show($toast)
+    } catch {
+        Write-Log "[$($Download.id)] Windows toast unavailable: $($_.Exception.Message)"
     }
 }
 
@@ -3125,6 +3145,7 @@ function Update-Downloads {
                 $dl.status = "post-processing"; Save-QueueRecord $dl
                 try { [void](Invoke-HardwareTranscode $dl) } catch { Write-Log "[$id] Hardware transcode error: $($_.Exception.Message)" }
                 try { Invoke-PostProcess $dl } catch { Write-Log "[$id] Post-processing error: $($_.Exception.Message)" }
+                try { Send-CompletionToast $dl } catch { Write-Log "[$id] Completion toast error: $($_.Exception.Message)" }
                 $dl.status = "complete"; $dl.progress = 100
                 Write-Log "[$id] Complete"
                 # Save to download history
@@ -3277,6 +3298,7 @@ while ($listener.IsListening) {
                         sitePresets = $config.SitePresets
                         hardwareEncoder = $config.HardwareEncoder
                         namedPipeName = $config.NamedPipeName
+                        toastNotifications = $config.ToastNotifications
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
@@ -3321,7 +3343,7 @@ while ($listener.IsListening) {
                         }
                     }
                     # Update boolean/string fields
-                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','PostProcessAudio','PostProcessMusicBrainz','EmbedSubs','SubtitleSrt','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
+                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','PostProcessAudio','PostProcessMusicBrainz','EmbedSubs','SubtitleSrt','SponsorBlock','DownloadArchive','AutoUpdateYtDlp','ToastNotifications')
                     foreach ($f in $boolFields) {
                         $camel = $f.Substring(0,1).ToLower() + $f.Substring(1)
                         if ($cfgUpdate.PSObject.Properties.Name -contains $camel) {
