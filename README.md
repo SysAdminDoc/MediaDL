@@ -160,6 +160,8 @@ Enable the opt-in post-processing switches to extract audio after a video comple
 #### 🎛️ Format Control
 Configure host presets in the server settings JSON. The built-in examples request 1080p AV1 MP4 for YouTube, best MP4 for X/Twitter, and FLAC with an MP3 retry for SoundCloud.
 
+Subtitle control can optionally download manual and automatic captions as SRT and mux them into an MKV output.
+
 #### 📂 Open on Complete
 Click "Complete!" to open Explorer with the downloaded file pre-selected.
 

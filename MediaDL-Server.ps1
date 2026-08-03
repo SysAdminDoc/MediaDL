@@ -74,6 +74,7 @@ $configDefaults = @{
         'soundcloud.com' = [ordered]@{ format = 'flac'; quality = 'best'; fallbackFormat = 'mp3' }
     }
     EmbedSubs = $false
+    SubtitleSrt = $false
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -430,7 +431,8 @@ $xamlString = @"
                                 <TextBox x:Name="cfgSitePresets" Height="72" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="10"/>
                                 <TextBlock Text="Host keys support format, quality, codec (av01/vp9/h264/hevc), and fallbackFormat." FontSize="10" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                  <CheckBox x:Name="cfgEmbedSubs" Content="Embed subtitles"/>
-                                <StackPanel Orientation="Horizontal" Margin="20,4,0,0">
+                                 <CheckBox x:Name="cfgSubtitleSrt" Content="Download subtitles as SRT and mux into MKV"/>
+                                 <StackPanel Orientation="Horizontal" Margin="20,4,0,0">
                                     <TextBlock Text="Languages:" FontSize="11" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                                     <TextBox x:Name="cfgSubLangs" Width="120" FontSize="11"/>
                                 </StackPanel>
@@ -532,6 +534,7 @@ $cfgPostProcessMusicBrainz = $window.FindName("cfgPostProcessMusicBrainz")
 $cfgMusicFolder = $window.FindName("cfgMusicFolder")
 $cfgSitePresets = $window.FindName("cfgSitePresets")
 $cfgEmbedSubs = $window.FindName("cfgEmbedSubs")
+$cfgSubtitleSrt = $window.FindName("cfgSubtitleSrt")
 $cfgSubLangs = $window.FindName("cfgSubLangs")
 $cfgSponsorBlock = $window.FindName("cfgSponsorBlock")
 $cfgFragments = $window.FindName("cfgFragments")
@@ -562,6 +565,7 @@ function Load-SettingsUI {
     $cfgMusicFolder.Text = "$($c.MusicFolder)"
     $cfgSitePresets.Text = if ($c.SitePresets) { $c.SitePresets | ConvertTo-Json -Compress } else { '{}' }
     $cfgEmbedSubs.IsChecked = $c.EmbedSubs -eq $true
+    $cfgSubtitleSrt.IsChecked = $c.SubtitleSrt -eq $true
     $cfgSubLangs.Text = "$($c.SubLangs)"
     $cfgSponsorBlock.IsChecked = $c.SponsorBlock -eq $true
     $cfgFragments.Text = "$($c.ConcurrentFragments)"
@@ -1161,6 +1165,7 @@ VALUES (
             $reqQ = if ($params.quality) { ("$($params.quality)").ToLowerInvariant() } elseif ($presetQuality) { $presetQuality } else { 'best' }
             $format = if ($audioOnly) { if ($reqFmt -and $allowedAF -contains $reqFmt) { $reqFmt } else { 'mp3' } } else { if ($reqFmt -and $allowedVF -contains $reqFmt) { $reqFmt } else { 'mp4' } }
             $quality = if ($allowedQ -contains $reqQ) { $reqQ } else { 'best' }
+            if (-not $audioOnly -and $config.SubtitleSrt -eq $true) { $format = 'mkv' }
             $codec = if (-not $audioOnly -and @('av01','vp9','h264','hevc') -contains $presetCodec) { $presetCodec } else { 'auto' }
             $fallbackFormat = if ($audioOnly -and $allowedAF -contains $presetFallback -and $presetFallback -ne $format) { $presetFallback } else { $null }
             if (-not $audioOnly -and $sitePreset -and $sitePreset.codec) { Write-SLog "[$id] Site preset $siteKey selects codec=$codec" }
@@ -1204,7 +1209,11 @@ VALUES (
             if ($config.EmbedThumbnail -eq $true) { $args += '--embed-thumbnail' }
             if ($config.EmbedChapters -eq $true) { $args += '--embed-chapters' }
             if ($splitChapters) { $args += '--split-chapters' }
-            if ($config.EmbedSubs -eq $true) { $args += '--embed-subs'; $args += '--write-subs'; $args += '--write-auto-subs'; $args += '--sub-langs'; $args += ($config.SubLangs -replace '[^a-zA-Z0-9,\-]','') }
+            if (-not $audioOnly -and -not $isDirect -and $config.SubtitleSrt -eq $true) {
+                $args += '--write-subs'; $args += '--write-auto-subs'; $args += '--sub-langs'; $args += (($config.SubLangs -replace '[^a-zA-Z0-9,\-]','') -replace '^$','all'); $args += '--sub-format'; $args += 'srt'; $args += '--embed-subs'
+            } elseif ($config.EmbedSubs -eq $true) {
+                $args += '--embed-subs'; $args += '--write-subs'; $args += '--write-auto-subs'; $args += '--sub-langs'; $args += (($config.SubLangs -replace '[^a-zA-Z0-9,\-]','') -replace '^$','all')
+            }
             if ($config.SponsorBlock -eq $true) { $action = if ($config.SponsorBlockAction -eq 'mark') {'mark'} else {'remove'}; $args += "--sponsorblock-$action"; $args += 'all' }
             if ($config.DownloadArchive -eq $true) { $args += '--download-archive'; $args += $state.ArchivePath }
             $bandwidthLimit = [int]$config.BandwidthLimitKbps
@@ -1605,7 +1614,7 @@ button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
                     }
                     '^/config$' {
                         if ($method -eq 'GET') {
-                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;musicFolder=$config.MusicFolder;postProcessAudio=$config.PostProcessAudio;postProcessMusicBrainz=$config.PostProcessMusicBrainz;sitePresets=$config.SitePresets;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
+                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;musicFolder=$config.MusicFolder;postProcessAudio=$config.PostProcessAudio;postProcessMusicBrainz=$config.PostProcessMusicBrainz;sitePresets=$config.SitePresets;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subtitleSrt=$config.SubtitleSrt;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
                         } else { Send-Json $ctx @{error="Use GUI settings"} 405 }
                     }
                     '^/pause/(.+)$' {
@@ -1764,6 +1773,7 @@ $btnSaveSettings.Add_Click({
         return
     }
     $script:Config.EmbedSubs = $cfgEmbedSubs.IsChecked
+    $script:Config.SubtitleSrt = $cfgSubtitleSrt.IsChecked
     $script:Config.SubLangs = $cfgSubLangs.Text
     $script:Config.SponsorBlock = $cfgSponsorBlock.IsChecked
     $v = 0; if ([int]::TryParse($cfgFragments.Text, [ref]$v) -and $v -ge 1 -and $v -le 32) { $script:Config.ConcurrentFragments = $v }

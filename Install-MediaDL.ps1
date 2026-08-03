@@ -1032,6 +1032,7 @@ $btnNext.Add_Click({
                             'x.com' = [ordered]@{ format = 'mp4'; quality = 'best' }
                             'soundcloud.com' = [ordered]@{ format = 'flac'; quality = 'best'; fallbackFormat = 'mp3' }
                         }
+                        SubtitleSrt = $false
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1206,6 +1207,7 @@ $downloadFormat = if ($audioOnly) {
     $candidate = if ($requestedFormat) { $requestedFormat } elseif ($sitePreset -and $sitePreset.format) { "$($sitePreset.format)".ToLowerInvariant() } else { 'mp4' }
     if ($allowedVideoFormats -contains $candidate) { $candidate } else { 'mp4' }
 }
+if (-not $audioOnly -and -not $isDirect -and $config.SubtitleSrt -eq $true) { $downloadFormat = 'mkv' }
 $downloadQuality = if ($requestedQuality) { $requestedQuality } elseif ($sitePreset -and $sitePreset.quality) { "$($sitePreset.quality)".ToLowerInvariant() } else { 'best' }
 if ($allowedQualities -notcontains $downloadQuality) { $downloadQuality = 'best' }
 $downloadCodec = if (-not $audioOnly -and $sitePreset -and @('av01','vp9','h264','hevc') -contains ("$($sitePreset.codec)".ToLowerInvariant())) { "$($sitePreset.codec)".ToLowerInvariant() } else { 'auto' }
@@ -1224,6 +1226,8 @@ if ($downloadQuality -eq 'best') {
     $formatSelector = if ($downloadCodec -eq 'auto') { "$fallbackHeight+bestaudio/best[height<=$downloadQuality]/best" } else { "$heightSelector+bestaudio/$fallbackHeight+bestaudio/best[height<=$downloadQuality]/best" }
 }
 Write-Log "Preset: site=$identitySite format=$downloadFormat quality=$downloadQuality codec=$downloadCodec"
+$subtitleEnabled = (-not $audioOnly -and -not $isDirect -and $config.SubtitleSrt -eq $true)
+$subtitleLangs = (($config.SubLangs -replace '[^a-zA-Z0-9,\-]', '') -replace '^$', 'all')
 
 $iconPath = Join-Path $PSScriptRoot "icon.ico"
 $progressFile = Join-Path $env:TEMP "mdl_progress_$([guid]::NewGuid().ToString('N')).txt"
@@ -1608,13 +1612,16 @@ $timer.Add_Tick({
                       else { Join-Path $config.DownloadPath "%(title)s.%(ext)s" }
             $lblStatus.Text = if ($recordFromNow) { "Recording live stream..." } else { "Downloading..." }
             $script:job = Start-Job -ScriptBlock {
-                param($exe,$ff,$out,$vUrl,$pf,$ref,$direct,$formatSelector,$videoFormat)
+                param($exe,$ff,$out,$vUrl,$pf,$ref,$direct,$formatSelector,$videoFormat,$subtitleEnabled,$subtitleLangs)
                 $a = if ($direct) { @('--newline','--progress','--ffmpeg-location',$ff,'-o',$out) }
                      else { @('-f',$formatSelector,'--merge-output-format',$videoFormat,'--newline','--progress','--ffmpeg-location',$ff,'-o',$out) }
+                if ($subtitleEnabled) {
+                    $a += '--write-subs'; $a += '--write-auto-subs'; $a += '--sub-langs'; $a += $subtitleLangs; $a += '--sub-format'; $a += 'srt'; $a += '--embed-subs'
+                }
                 if ($ref) { $a += '--referer'; $a += $ref }
                 $a += $vUrl
                 & $exe @a 2>&1 | ForEach-Object { $_ | Out-File $pf -Append -Encoding utf8; $_ }
-            } -ArgumentList $ytdlp,$ffLoc,$outTpl,$videoUrl,$progressFile,$referer,$isDirect,$formatSelector,$downloadFormat
+            } -ArgumentList $ytdlp,$ffLoc,$outTpl,$videoUrl,$progressFile,$referer,$isDirect,$formatSelector,$downloadFormat,$subtitleEnabled,$subtitleLangs
         }
         $script:step = 1
     }
@@ -1903,6 +1910,7 @@ $configDefaults = @{
         'soundcloud.com' = [ordered]@{ format = 'flac'; quality = 'best'; fallbackFormat = 'mp3' }
     }
     EmbedSubs = $false
+    SubtitleSrt = $false
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -2634,6 +2642,7 @@ function Start-Download {
         $format = if ($reqFormat -and $allowedVideoFmt -contains $reqFormat) { $reqFormat } else { 'mp4' }
     }
     $quality = if ($allowedQuality -contains $reqQuality) { $reqQuality } else { 'best' }
+    if (-not $audioOnly -and $config.SubtitleSrt -eq $true) { $format = 'mkv' }
     $codec = if (-not $audioOnly -and @('av01','vp9','h264','hevc') -contains $presetCodec) { $presetCodec } else { 'auto' }
     $fallbackFormat = if ($audioOnly -and $allowedAudioFmt -contains $presetFallback -and $presetFallback -ne $format) { $presetFallback } else { $null }
 
@@ -2703,12 +2712,20 @@ function Start-Download {
     if ($config.EmbedThumbnail -eq $true) { $commonArgs += '--embed-thumbnail' }
     if ($config.EmbedChapters -eq $true) { $commonArgs += '--embed-chapters' }
     if ($splitChapters) { $commonArgs += '--split-chapters' }
-    if ($config.EmbedSubs -eq $true) {
+    if (-not $audioOnly -and -not $isDirect -and $config.SubtitleSrt -eq $true) {
+        $commonArgs += '--write-subs'
+        $commonArgs += '--write-auto-subs'
+        $commonArgs += '--sub-langs'
+        $commonArgs += (($config.SubLangs -replace '[^a-zA-Z0-9,\-]', '') -replace '^$', 'all')
+        $commonArgs += '--sub-format'
+        $commonArgs += 'srt'
+        $commonArgs += '--embed-subs'
+    } elseif ($config.EmbedSubs -eq $true) {
         $commonArgs += '--embed-subs'
         $commonArgs += '--write-subs'
         $commonArgs += '--write-auto-subs'
         $commonArgs += '--sub-langs'
-        $commonArgs += ($config.SubLangs -replace '[^a-zA-Z0-9,\-]', '')
+        $commonArgs += (($config.SubLangs -replace '[^a-zA-Z0-9,\-]', '') -replace '^$', 'all')
     }
 
     # SponsorBlock (toggleable via config)
@@ -3026,6 +3043,7 @@ while ($listener.IsListening) {
                         embedChapters = $config.EmbedChapters
                         splitChapters = $config.SplitChapters
                         embedSubs = $config.EmbedSubs
+                        subtitleSrt = $config.SubtitleSrt
                         subLangs = $config.SubLangs
                         sponsorBlock = $config.SponsorBlock
                         sponsorBlockAction = $config.SponsorBlockAction
@@ -3061,7 +3079,7 @@ while ($listener.IsListening) {
                         }
                     }
                     # Update boolean/string fields
-                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','PostProcessAudio','PostProcessMusicBrainz','EmbedSubs','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
+                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','PostProcessAudio','PostProcessMusicBrainz','EmbedSubs','SubtitleSrt','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
                     foreach ($f in $boolFields) {
                         $camel = $f.Substring(0,1).ToLower() + $f.Substring(1)
                         if ($cfgUpdate.PSObject.Properties.Name -contains $camel) {
