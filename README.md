@@ -28,7 +28,7 @@
 
 <br>
 
-**3-tier failover** &nbsp;·&nbsp; **hidden background server** &nbsp;·&nbsp; **real-time progress** &nbsp;·&nbsp; **6-layer Facebook extraction**
+**3-tier failover** &nbsp;·&nbsp; **hidden background server** &nbsp;·&nbsp; **real-time progress** &nbsp;·&nbsp; **7-layer Facebook extraction**
 
 <br>
 
@@ -184,7 +184,7 @@ Self-update throttled to once per 24 hours via timestamp file.
  │  MediaDL Userscript             │    │  ┌─ Tier 1: Download Server ────┐  │
  │  ├─ Auto-detect <video>         │HTTP│  │  ytdl-server.ps1              │  │
  │  ├─ Floating download pills     │◀──▶│  │  127.0.0.1:9751              │  │
- │  ├─ Facebook 6-layer extraction │    │  │  ├─ Concurrent downloads (3x) │  │
+ │  ├─ Facebook 7-layer extraction │    │  │  ├─ Concurrent downloads (3x) │  │
  │  ├─ In-page progress toasts     │    │  │  ├─ Real-time progress        │  │
  │  └─ SPA navigation handling     │    │  │  └─ Auto-start on login      │  │
  │                                 │    │  └───────────────────────────────  │
@@ -210,10 +210,10 @@ Self-update throttled to once per 24 hours via timestamp file.
 <br>
 
 <details>
-<summary><h3>🔬 Facebook 6-Layer Extraction</h3></summary>
+<summary><h3>🔬 Facebook 7-Layer Extraction</h3></summary>
 <br>
 
-Facebook aggressively obfuscates video URLs. MediaDL defeats this with **six extraction layers** tried in priority order:
+Facebook aggressively obfuscates video URLs. MediaDL defeats this with **seven extraction layers** tried in priority order:
 
 | # | Layer | Technique |
 |:--:|:--|:--|
@@ -222,7 +222,8 @@ Facebook aggressively obfuscates video URLs. MediaDL defeats this with **six ext
 | 3 | **React Fiber Tree Walk** | Traverses `__reactFiber` from the `<video>` element upward through `memoizedProps` searching for `browser_native_hd_url` |
 | 4 | **Embedded JSON Scrape** | Searches `<script type="application/json">` blocks for HD video URL patterns |
 | 5 | **DOM Permalink Walk** | Climbs the DOM tree from the video element to find a `/videos/`, `/watch/`, or `/reel/` link |
-| 6 | **Page URL Fallback** | Uses `window.location.href` if it matches a Facebook video/reel/story URL pattern |
+| 6 | **Page URL Candidate** | Keeps the current Facebook video/reel/story URL as a fallback candidate |
+| 7 | **MQTT / GraphQL WebSocket** | Hooks page-context WebSocket frames and extracts HD URLs from text, JSON, Blob, and ArrayBuffer payloads |
 
 </details>
 

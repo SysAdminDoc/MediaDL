@@ -52,16 +52,71 @@
     let serverToken = GM_getValue('mdl_server_token', '');
 
     // =========================================================================
-    // FACEBOOK XHR/FETCH INTERCEPT
-    // Inject into page context to capture video CDN URLs from API responses
+    // FACEBOOK NETWORK INTERCEPT
+    // Inject into page context to capture API and MQTT/GraphQL WebSocket media URLs.
     // =========================================================================
     if (location.hostname.includes('facebook.com') || location.hostname.includes('fb.com')) {
         try {
             const interceptScript = document.createElement('script');
-            interceptScript.textContent = `(function(){
+            interceptScript.textContent = '(' + function() {
                 if(window.__mdl_intercepted) return;
                 window.__mdl_intercepted = true;
                 window.__mdl_captured_urls = [];
+                window.__mdl_ws_captured_urls = [];
+
+                function addCapturedUrl(raw, bucket, force) {
+                    if (typeof raw !== 'string' || raw.length < 12) return;
+                    var value = raw
+                        .replace(/\\"/g, '"')
+                        .replace(/\\\//g, '/')
+                        .replace(/\\u0025/gi, '%')
+                        .replace(/\\u0026/gi, '&')
+                        .replace(/\\u003d/gi, '=')
+                        .replace(/\\u002f/gi, '/')
+                        .replace(/&amp;/g, '&');
+                    if (!/^https?:\/\//i.test(value)) return;
+                    if (!/(fbcdn\.net|video\.fbsbx\.com)/i.test(value)) return;
+                    if (!force && !/(?:\.mp4|\.m3u8|[?&](?:efg|oh|ccb|oe|_nc_|__|bytestart)=|\/v\/t\d)/i.test(value)) return;
+                    if (value.length > 4000) return;
+                    var target = bucket || window.__mdl_captured_urls;
+                    if (target.indexOf(value) === -1) {
+                        target.push(value);
+                        try { window.dispatchEvent(new Event('mediadl-ws-capture')); } catch(e) {}
+                    }
+                }
+
+                function walkPayload(value, bucket, depth) {
+                    if (depth > 10 || value === null || value === undefined) return;
+                    if (typeof value === 'string') {
+                        addCapturedUrl(value, bucket, false);
+                        return;
+                    }
+                    if (typeof value !== 'object') return;
+                    var keys = Object.keys(value);
+                    for (var i = 0; i < keys.length && i < 250; i++) {
+                        var key = keys[i];
+                        var child = value[key];
+                        var force = /(?:browser_native_hd_url|playable_url_quality_hd|hd_src|video_url|playable_url|sd_src)/i.test(key);
+                        if (force && typeof child === 'string') addCapturedUrl(child, bucket, true);
+                        else walkPayload(child, bucket, depth + 1);
+                    }
+                }
+
+                function inspectPayload(payload, bucket) {
+                    if (typeof payload !== 'string') return;
+                    var text = payload
+                        .replace(/\\"/g, '"')
+                        .replace(/\\u0025/gi, '%')
+                        .replace(/\\u0026/gi, '&')
+                        .replace(/\\u003d/gi, '=')
+                        .replace(/\\u002f/gi, '/');
+                    var fields = /"(?:browser_native_hd_url|playable_url_quality_hd|hd_src|video_url|playable_url|sd_src)"\s*:\s*"(https?:[^"\\]+)"/gi;
+                    var match;
+                    while ((match = fields.exec(text))) addCapturedUrl(match[1], bucket, true);
+                    var urls = /https?:\/\/[^"'\\\s]+/gi;
+                    while ((match = urls.exec(text))) addCapturedUrl(match[0], bucket, false);
+                    try { walkPayload(JSON.parse(text), bucket, 0); } catch(e) {}
+                }
                 const _fetch = window.fetch;
                 window.fetch = function(){
                     return _fetch.apply(this, arguments).then(function(r){
@@ -69,25 +124,7 @@
                             var cl = r.clone();
                             cl.text().then(function(t){
                                 try {
-                                    var m = t.match(/https?:\\\\/\\\\/[^"\\\\s]*?fbcdn\\\\.net[^"\\\\s]*?(mp4|video)[^"\\\\s]*/g);
-                                    if(m) {
-                                        m.forEach(function(u){
-                                            u = u.replace(/\\\\\\\\/g,'/').replace(/\\\\\\\\u0025/g,'%');
-                                            if(window.__mdl_captured_urls.indexOf(u)===-1 && u.length < 2000)
-                                                window.__mdl_captured_urls.push(u);
-                                        });
-                                    }
-                                    var hd = t.match(/"(?:browser_native_hd_url|playable_url_quality_hd|hd_src)":"(https?:[^"]+)"/g);
-                                    if(hd) {
-                                        hd.forEach(function(s){
-                                            var val = s.split('":"')[1];
-                                            if(val) {
-                                                val = val.slice(0,-1).replace(/\\\\\\\\/g,'/').replace(/\\\\\\\\u0025/g,'%');
-                                                if(window.__mdl_captured_urls.indexOf(val)===-1)
-                                                    window.__mdl_captured_urls.push(val);
-                                            }
-                                        });
-                                    }
+                                    inspectPayload(t, window.__mdl_captured_urls);
                                 } catch(e){}
                             }).catch(function(){});
                         } catch(e){}
@@ -101,23 +138,42 @@
                     this.addEventListener('load', function(){
                         try {
                             if(this.responseText && this.responseText.length > 100) {
-                                var m = this.responseText.match(/"(?:browser_native_hd_url|playable_url_quality_hd|hd_src|sd_src|playable_url)":"(https?:[^"]+)"/g);
-                                if(m) {
-                                    m.forEach(function(s){
-                                        var val = s.split('":"')[1];
-                                        if(val) {
-                                            val = val.slice(0,-1).replace(/\\\\\\\\/g,'/').replace(/\\\\\\\\u0025/g,'%');
-                                            if(window.__mdl_captured_urls.indexOf(val)===-1)
-                                                window.__mdl_captured_urls.push(val);
-                                        }
-                                    });
-                                }
+                                inspectPayload(this.responseText, window.__mdl_captured_urls);
                             }
                         } catch(e){}
                     });
                     return _send.apply(this,arguments);
                 };
-            })();`;
+                var NativeWebSocket = window.WebSocket;
+                if (NativeWebSocket) {
+                    function inspectWebSocketData(data) {
+                        if (typeof data === 'string') {
+                            inspectPayload(data, window.__mdl_ws_captured_urls);
+                        } else if (data instanceof ArrayBuffer) {
+                            try { inspectPayload(new TextDecoder().decode(data), window.__mdl_ws_captured_urls); } catch(e) {}
+                        } else if (ArrayBuffer.isView(data)) {
+                            try { inspectPayload(new TextDecoder().decode(data.buffer), window.__mdl_ws_captured_urls); } catch(e) {}
+                        } else if (typeof Blob !== 'undefined' && data instanceof Blob && data.text) {
+                            data.text().then(function(text) {
+                                inspectPayload(text, window.__mdl_ws_captured_urls);
+                            }).catch(function() {});
+                        }
+                    }
+                    function hookWebSocket(socket) {
+                        try { socket.addEventListener('message', function(event) { inspectWebSocketData(event.data); }); } catch(e) {}
+                        return socket;
+                    }
+                    try {
+                        window.WebSocket = new Proxy(NativeWebSocket, {
+                            construct: function(target, args, newTarget) {
+                                return hookWebSocket(Reflect.construct(target, args, newTarget));
+                            }
+                        });
+                    } catch(e) {
+                        window.WebSocket = NativeWebSocket;
+                    }
+                }
+            } + ')();';
             (document.head || document.documentElement).appendChild(interceptScript);
             interceptScript.remove();
         } catch(e) { console.log('MediaDL: XHR intercept injection failed:', e); }
@@ -688,16 +744,17 @@
     }
 
     // =========================================================================
-    // FACEBOOK EXTRACTION - 6-LAYER STRATEGY
+    // FACEBOOK EXTRACTION - 7-LAYER STRATEGY
     // 1. XHR intercepted URLs (highest quality, from API responses)
     // 2. Performance Resource Timing API (CDN URLs browser fetched)
     // 3. React fiber tree (component props)
     // 4. GraphQL-style data extraction (embedded JSON)
     // 5. DOM walk for permalink
-    // 6. Page URL fallback
+    // 6. Page URL candidate
+    // 7. MQTT/GraphQL WebSocket frame capture
     // =========================================================================
     function extractFacebookUrl(video) {
-        console.log('MediaDL [FB]: Starting 6-layer extraction');
+        console.log('MediaDL [FB]: Starting 7-layer extraction');
 
         // Layer 1: XHR Intercepted URLs
         const intercepted = getInterceptedUrls();
@@ -727,21 +784,32 @@
             return jsonUrl;
         }
 
-        // Layer 5: DOM walk for permalink
+        // Layer 5: DOM walk for permalink. Keep it as a candidate so a later
+        // WebSocket frame can replace a generic page URL with an HD CDN URL.
         const permalink = findFbPermalink(video);
+        let fallbackUrl = null;
         if (permalink) {
             console.log('MediaDL [FB]: Layer 5 HIT - Permalink:', permalink);
-            return permalink;
+            fallbackUrl = permalink;
         }
 
-        // Layer 6: Page URL (works on direct video pages)
+        // Layer 6: Keep the page URL as a fallback candidate. WebSocket frames
+        // can contain a higher-quality Reels URL even after the page is loaded.
+        let pageUrl = fallbackUrl;
         if (/\/videos\/|\/watch\/?\?v=|\/reel\/|\/stories\//.test(location.href)) {
             console.log('MediaDL [FB]: Layer 6 - Direct page URL');
-            return location.href;
+            pageUrl = pageUrl || location.href;
         }
 
-        console.log('MediaDL [FB]: All layers failed, using page URL');
-        return location.href;
+        // Layer 7: MQTT/GraphQL WebSocket frames
+        const wsUrl = getWebSocketCapturedUrl();
+        if (wsUrl) {
+            console.log('MediaDL [FB]: Layer 7 HIT - MQTT/GraphQL WebSocket URL');
+            return wsUrl;
+        }
+
+        console.log('MediaDL [FB]: All extraction layers failed, using page URL');
+        return pageUrl || location.href;
     }
 
     // Layer 1: Get best URL from XHR intercept
@@ -757,6 +825,16 @@
             if (any) return any;
         } catch {}
         return null;
+    }
+
+    function getWebSocketCapturedUrl() {
+        try {
+            const urls = window.__mdl_ws_captured_urls;
+            if (!Array.isArray(urls) || urls.length === 0) return null;
+            const hd = urls.find(u => /hd|quality_hd|browser_native_hd|playable_url_quality_hd/i.test(u));
+            if (hd && isFbVideoUrl(hd)) return hd;
+            return urls.find(u => isFbVideoUrl(u)) || null;
+        } catch { return null; }
     }
 
     // Layer 2: Performance Resource Timing API
@@ -958,6 +1036,14 @@
     }
 
     const debouncedScan = debounce(scanForEmbeds, CONFIG.scanIntervalMs);
+
+    // A WebSocket frame may arrive after the initial DOM scan. Rescan the
+    // current page without touching the user's input devices or browser UI.
+    window.addEventListener('mediadl-ws-capture', () => {
+        if (location.hostname.includes('facebook.com') || location.hostname.includes('fb.com')) {
+            debouncedScan();
+        }
+    });
 
     // =========================================================================
     // STYLE INJECTION + BOOT
