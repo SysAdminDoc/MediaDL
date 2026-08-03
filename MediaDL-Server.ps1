@@ -627,6 +627,114 @@ function Start-Server {
 
         function Write-SLog { param([string]$msg); $state.Log += "$(Get-Date -Format 'HH:mm:ss') $msg`n" }
 
+        $queueDbPath = Join-Path (Join-Path $env:LOCALAPPDATA 'MediaDL') 'queue.db'
+        $sqlitePath = $null
+        $sqliteCommand = Get-Command sqlite3.exe -ErrorAction SilentlyContinue
+        if ($sqliteCommand) { $sqlitePath = $sqliteCommand.Source }
+        elseif (Test-Path (Join-Path $state.InstallPath 'sqlite3.exe')) {
+            $sqlitePath = Join-Path $state.InstallPath 'sqlite3.exe'
+        }
+        if ($sqlitePath) {
+            try { New-Item -ItemType Directory -Path (Split-Path $queueDbPath) -Force | Out-Null } catch {}
+        }
+
+        function ConvertTo-SqliteLiteral {
+            param($Value)
+            if ($null -eq $Value) { return 'NULL' }
+            return "'" + ([string]$Value).Replace("'", "''") + "'"
+        }
+
+        function Invoke-QueueSql {
+            param([string]$Sql, [switch]$Json)
+            if (-not $sqlitePath) { return $null }
+            try {
+                if ($Json) { return ((& $sqlitePath -batch -json $queueDbPath $Sql 2>$null | Out-String).Trim()) }
+                & $sqlitePath -batch $queueDbPath $Sql 2>$null | Out-Null
+            } catch { Write-SLog "SQLite error: $($_.Exception.Message)" }
+        }
+
+        function Initialize-QueueDb {
+            if (-not $sqlitePath) {
+                Write-SLog "SQLite CLI unavailable; persistent queue disabled"
+                return
+            }
+            Invoke-QueueSql @"
+PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS downloads (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    title TEXT,
+    audio_only INTEGER NOT NULL DEFAULT 0,
+    referer TEXT,
+    format TEXT,
+    quality TEXT,
+    output_dir TEXT,
+    status TEXT NOT NULL,
+    progress REAL NOT NULL DEFAULT 0,
+    speed TEXT,
+    eta TEXT,
+    filename TEXT,
+    split_chapters INTEGER NOT NULL DEFAULT 0,
+    record_from_now INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_downloads_status_created ON downloads(status, created_at);
+"@
+        }
+
+        function Save-QueueRecord {
+            param($Download)
+            if (-not $sqlitePath -or -not $Download) { return }
+            $now = (Get-Date).ToUniversalTime().ToString('o')
+            $created = if ($Download.startTime) { ([datetime]$Download.startTime).ToUniversalTime().ToString('o') } else { $now }
+            $sql = @"
+INSERT OR REPLACE INTO downloads
+ (id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,split_chapters,record_from_now,created_at,updated_at)
+VALUES (
+ $(ConvertTo-SqliteLiteral $Download.id),
+ $(ConvertTo-SqliteLiteral $Download.url),
+ $(ConvertTo-SqliteLiteral $Download.title),
+ $(if ($Download.audioOnly) { 1 } else { 0 }),
+ $(ConvertTo-SqliteLiteral $Download.referer),
+ $(ConvertTo-SqliteLiteral $Download.format),
+ $(ConvertTo-SqliteLiteral $Download.quality),
+ $(ConvertTo-SqliteLiteral $Download.outputDir),
+ $(ConvertTo-SqliteLiteral $Download.status),
+ $([double]$Download.progress),
+ $(ConvertTo-SqliteLiteral $Download.speed),
+ $(ConvertTo-SqliteLiteral $Download.eta),
+ $(ConvertTo-SqliteLiteral $Download.filename),
+ $(if ($Download.splitChapters) { 1 } else { 0 }),
+ $(if ($Download.recordFromNow) { 1 } else { 0 }),
+ $(ConvertTo-SqliteLiteral $created),
+ $(ConvertTo-SqliteLiteral $now)
+);
+"@
+            Invoke-QueueSql $sql
+        }
+
+        function Restore-QueueEntries {
+            if (-not $sqlitePath) { return }
+            $json = Invoke-QueueSql "SELECT id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,split_chapters,record_from_now,created_at FROM downloads WHERE status NOT IN ('complete','failed','cancelled') ORDER BY created_at;" -Json
+            if (-not $json) { return }
+            try { $rows = @($json | ConvertFrom-Json) } catch { return }
+            foreach ($row in $rows) {
+                $start = Get-Date
+                try { $start = [datetime]::Parse("$($row.created_at)").ToLocalTime() } catch {}
+                $state.Downloads["$($row.id)"] = [hashtable]::Synchronized(@{
+                    id="$($row.id)"; url="$($row.url)"; title="$($row.title)"
+                    audioOnly=([int]$row.audio_only -eq 1); status="interrupted"
+                    progress=[double]$row.progress; speed="$($row.speed)"; eta="$($row.eta)"
+                    process=$null; progressFile=""; startTime=$start; filename="$($row.filename)"
+                    format="$($row.format)"; quality="$($row.quality)"
+                    splitChapters=([int]$row.split_chapters -eq 1); recordFromNow=([int]$row.record_from_now -eq 1)
+                    referer="$($row.referer)"; outputDir="$($row.output_dir)"
+                })
+            }
+            if ($rows.Count -gt 0) { Write-SLog "Restored $($rows.Count) interrupted queue item(s) from SQLite" }
+        }
+
         function Read-FileTail {
             param([string]$Path, [int]$Bytes = 4096)
             try {
@@ -728,8 +836,10 @@ function Start-Server {
             $state.Downloads[$id] = [hashtable]::Synchronized(@{
                 id=$id; url=$url; title=if($title){$title}else{"Unknown"}; audioOnly=$audioOnly
                 status="downloading"; progress=0; speed=""; eta=""; process=$proc
-                progressFile=$progressFile; startTime=(Get-Date); filename=""; format=$format; quality=$quality; splitChapters=$splitChapters
+                progressFile=$progressFile; startTime=(Get-Date); filename=""; format=$format; quality=$quality
+                splitChapters=$splitChapters; recordFromNow=$recordFromNow; referer=$referer; outputDir=$outDir
             })
+            Save-QueueRecord $state.Downloads[$id]
             Write-SLog "[$id] Started: $($url.Substring(0,[Math]::Min(60,$url.Length)))... recordFromNow=$recordFromNow"
             return $id
         }
@@ -773,6 +883,7 @@ function Start-Server {
                         $dl.status = "failed"
                         Write-SLog "[$id] Failed"
                     }
+                    Save-QueueRecord $dl
                     foreach ($f in @($dl.progressFile, (Join-Path $env:TEMP "mdl_stderr_$id.txt"), (Join-Path $env:TEMP "mdl_wrap_$id.ps1"))) {
                         if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
                     }
@@ -809,6 +920,9 @@ function Start-Server {
             try { Start-Process -FilePath $config.YtDlpPath -ArgumentList "-U" -NoNewWindow -ErrorAction SilentlyContinue } catch {}
             Write-SLog "yt-dlp auto-update triggered"
         }
+
+        Initialize-QueueDb
+        Restore-QueueEntries
 
         # ── Start listener ──
         $listener = New-Object System.Net.HttpListener
@@ -881,6 +995,7 @@ function Start-Server {
                             $dl = $state.Downloads[$cid]
                             if ($dl.process -and -not $dl.process.HasExited) { try { $dl.process.Kill() } catch {} }
                             $dl.status = "cancelled"
+                            Save-QueueRecord $dl
                             Send-Json $ctx @{id=$cid;cancelled=$true}
                         } else { Send-Json $ctx @{error="Not found"} 404 }
                     }
@@ -891,7 +1006,13 @@ function Start-Server {
         }
 
         # Cleanup
-        foreach ($dl in $state.Downloads.Values) { if ($dl.process -and -not $dl.process.HasExited) { try { $dl.process.Kill() } catch {} } }
+        foreach ($dl in $state.Downloads.Values) {
+            if ($dl.process -and -not $dl.process.HasExited) {
+                $dl.status = "interrupted"
+                Save-QueueRecord $dl
+                try { $dl.process.Kill() } catch {}
+            }
+        }
         try { $listener.Stop(); $listener.Close() } catch {}
         $state.Running = $false
         Write-SLog "Server stopped"

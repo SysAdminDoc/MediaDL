@@ -45,6 +45,8 @@ $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
+$script:SqliteToolsUrl = "https://www.sqlite.org/2026/sqlite-tools-win-x64-3530400.zip"
+$script:SqliteToolsSha256 = "F46EE2475DE4CBE287E6E5F7D43C838796B14E7379CD216BDBB28D391429F9FC"
 
 
 # Image URLs
@@ -985,8 +987,35 @@ $btnNext.Add_Click({
                         Update-Status "  [OK] ffmpeg already exists"
                     }
                     Set-Progress 40
-                    
-                    # Step 4: Save config
+
+                    # Step 4: Download SQLite CLI for the persistent queue
+                    Update-Status "Installing SQLite queue journal..."
+                    $sqliteZip = Join-Path $script:InstallPath "sqlite-tools.zip"
+                    $sqlitePath = Join-Path $script:InstallPath "sqlite3.exe"
+                    if (!(Test-Path $sqlitePath)) {
+                        try {
+                            Invoke-DownloadWithUI -Uri $script:SqliteToolsUrl -OutFile $sqliteZip
+                            $hash = (Get-FileHash -LiteralPath $sqliteZip -Algorithm SHA256).Hash
+                            if ($hash -ne $script:SqliteToolsSha256) {
+                                throw "SQLite archive SHA-256 mismatch"
+                            }
+                            $zip = [System.IO.Compression.ZipFile]::OpenRead($sqliteZip)
+                            $sqliteEntry = $zip.Entries | Where-Object { $_.Name -eq "sqlite3.exe" } | Select-Object -First 1
+                            if (-not $sqliteEntry) { throw "sqlite3.exe missing from SQLite archive" }
+                            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($sqliteEntry, $sqlitePath, $true)
+                            $zip.Dispose()
+                            Remove-Item $sqliteZip -Force -ErrorAction SilentlyContinue
+                            Update-Status "  [OK] SQLite queue journal"
+                        } catch {
+                            if (Test-Path -LiteralPath $sqliteZip) { Remove-Item $sqliteZip -Force -ErrorAction SilentlyContinue }
+                            Update-Status "  [!] Warning: Could not install SQLite; queue persistence will use an existing sqlite3.exe if available"
+                        }
+                    } else {
+                        Update-Status "  [OK] SQLite queue journal already exists"
+                    }
+                    Set-Progress 45
+
+                    # Step 5: Save config
                     Update-Status "Saving configuration..."
                     $config = @{
                         DownloadPath = $dlPath
@@ -1001,9 +1030,9 @@ $btnNext.Add_Click({
                     }
                     $config | ConvertTo-Json | Set-Content (Join-Path $script:InstallPath "config.json") -Encoding UTF8
                     Update-Status "  [OK] Configuration saved"
-                    Set-Progress 45
-                    
-                    # Step 5: Create handlers
+                    Set-Progress 50
+
+                    # Step 6: Create handlers
                     Update-Status "Creating protocol handlers..."
                     
                     $dlHandler = @'
@@ -1811,6 +1840,114 @@ function Save-HistoryEntry {
 $downloads = @{}
 $nextId = 0
 
+$queueDbPath = Join-Path (Join-Path $env:LOCALAPPDATA 'MediaDL') 'queue.db'
+$sqlitePath = $null
+$sqliteCommand = Get-Command sqlite3.exe -ErrorAction SilentlyContinue
+if ($sqliteCommand) { $sqlitePath = $sqliteCommand.Source }
+elseif (Test-Path (Join-Path $PSScriptRoot 'sqlite3.exe')) {
+    $sqlitePath = Join-Path $PSScriptRoot 'sqlite3.exe'
+}
+if ($sqlitePath) {
+    try { New-Item -ItemType Directory -Path (Split-Path $queueDbPath) -Force | Out-Null } catch {}
+}
+
+function ConvertTo-SqliteLiteral {
+    param($Value)
+    if ($null -eq $Value) { return 'NULL' }
+    return "'" + ([string]$Value).Replace("'", "''") + "'"
+}
+
+function Invoke-QueueSql {
+    param([string]$Sql, [switch]$Json)
+    if (-not $sqlitePath) { return $null }
+    try {
+        if ($Json) { return ((& $sqlitePath -batch -json $queueDbPath $Sql 2>$null | Out-String).Trim()) }
+        & $sqlitePath -batch $queueDbPath $Sql 2>$null | Out-Null
+    } catch { Write-Log "SQLite error: $($_.Exception.Message)" }
+}
+
+function Initialize-QueueDb {
+    if (-not $sqlitePath) {
+        Write-Log "SQLite CLI unavailable; persistent queue disabled"
+        return
+    }
+    Invoke-QueueSql @"
+PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS downloads (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    title TEXT,
+    audio_only INTEGER NOT NULL DEFAULT 0,
+    referer TEXT,
+    format TEXT,
+    quality TEXT,
+    output_dir TEXT,
+    status TEXT NOT NULL,
+    progress REAL NOT NULL DEFAULT 0,
+    speed TEXT,
+    eta TEXT,
+    filename TEXT,
+    split_chapters INTEGER NOT NULL DEFAULT 0,
+    record_from_now INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_downloads_status_created ON downloads(status, created_at);
+"@
+}
+
+function Save-QueueRecord {
+    param($Download)
+    if (-not $sqlitePath -or -not $Download) { return }
+    $now = (Get-Date).ToUniversalTime().ToString('o')
+    $created = if ($Download.startTime) { ([datetime]$Download.startTime).ToUniversalTime().ToString('o') } else { $now }
+    $sql = @"
+INSERT OR REPLACE INTO downloads
+ (id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,split_chapters,record_from_now,created_at,updated_at)
+VALUES (
+ $(ConvertTo-SqliteLiteral $Download.id),
+ $(ConvertTo-SqliteLiteral $Download.url),
+ $(ConvertTo-SqliteLiteral $Download.title),
+ $(if ($Download.audioOnly) { 1 } else { 0 }),
+ $(ConvertTo-SqliteLiteral $Download.referer),
+ $(ConvertTo-SqliteLiteral $Download.format),
+ $(ConvertTo-SqliteLiteral $Download.quality),
+ $(ConvertTo-SqliteLiteral $Download.outputDir),
+ $(ConvertTo-SqliteLiteral $Download.status),
+ $([double]$Download.progress),
+ $(ConvertTo-SqliteLiteral $Download.speed),
+ $(ConvertTo-SqliteLiteral $Download.eta),
+ $(ConvertTo-SqliteLiteral $Download.filename),
+ $(if ($Download.splitChapters) { 1 } else { 0 }),
+ $(if ($Download.recordFromNow) { 1 } else { 0 }),
+ $(ConvertTo-SqliteLiteral $created),
+ $(ConvertTo-SqliteLiteral $now)
+);
+"@
+    Invoke-QueueSql $sql
+}
+
+function Restore-QueueEntries {
+    if (-not $sqlitePath) { return }
+    $json = Invoke-QueueSql "SELECT id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,split_chapters,record_from_now,created_at FROM downloads WHERE status NOT IN ('complete','failed','cancelled') ORDER BY created_at;" -Json
+    if (-not $json) { return }
+    try { $rows = @($json | ConvertFrom-Json) } catch { return }
+    foreach ($row in $rows) {
+        $start = Get-Date
+        try { $start = [datetime]::Parse("$($row.created_at)").ToLocalTime() } catch {}
+        $downloads["$($row.id)"] = @{
+            id="$($row.id)"; url="$($row.url)"; title="$($row.title)"
+            audioOnly=([int]$row.audio_only -eq 1); status="interrupted"
+            progress=[double]$row.progress; speed="$($row.speed)"; eta="$($row.eta)"
+            process=$null; progressFile=""; startTime=$start; filename="$($row.filename)"
+            format="$($row.format)"; quality="$($row.quality)"
+            splitChapters=([int]$row.split_chapters -eq 1); recordFromNow=([int]$row.record_from_now -eq 1)
+            referer="$($row.referer)"; outputDir="$($row.output_dir)"
+        }
+    }
+    if ($rows.Count -gt 0) { Write-Log "Restored $($rows.Count) interrupted queue item(s) from SQLite" }
+}
+
 function New-JsonResponse {
     param($context, $data, [int]$status = 200)
     $json = $data | ConvertTo-Json -Depth 5 -Compress
@@ -2020,7 +2157,9 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
         speed = ""; eta = ""; process = $proc; progressFile = $progressFile
         startTime = (Get-Date); filename = ""; format = $format; quality = $quality
         splitChapters = $splitChapters; recordFromNow = $recordFromNow
+        referer = $referer; outputDir = $outDir
     }
+    Save-QueueRecord $downloads[$id]
 
     return $id
 }
@@ -2101,6 +2240,7 @@ function Update-Downloads {
                 $errMsg = if (Test-Path $errFile) { (Read-FileTail $errFile 2048) } else { "" }
                 Write-Log "[$id] Failed: $($allOutput.Substring(0, [Math]::Min(200, $allOutput.Length))) $errMsg"
             }
+            Save-QueueRecord $dl
 
             # Cleanup temp files
             if (Test-Path $dl.progressFile) { Remove-Item $dl.progressFile -Force -ErrorAction SilentlyContinue }
@@ -2121,6 +2261,9 @@ function Clean-OldDownloads {
         }
     }
 }
+
+Initialize-QueueDb
+Restore-QueueEntries
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://127.0.0.1:$PORT/")
@@ -2310,6 +2453,7 @@ while ($listener.IsListening) {
                         try { $dl.process.Kill() } catch {}
                     }
                     $dl.status = "cancelled"
+                    Save-QueueRecord $dl
                     if (Test-Path $dl.progressFile) { Remove-Item $dl.progressFile -Force -ErrorAction SilentlyContinue }
                     New-JsonResponse $context @{ id = $id; cancelled = $true }
                 } else { New-JsonResponse $context @{ error = "Not found" } 404 }
@@ -2330,6 +2474,8 @@ while ($listener.IsListening) {
 
 foreach ($dl in $downloads.Values) {
     if ($dl.process -and -not $dl.process.HasExited) {
+        $dl.status = "interrupted"
+        Save-QueueRecord $dl
         try { $dl.process.Kill() } catch {}
     }
     if ($dl.progressFile -and (Test-Path $dl.progressFile)) {
