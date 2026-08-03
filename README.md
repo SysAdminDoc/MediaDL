@@ -142,6 +142,9 @@ Cancelling kills both the PowerShell wrapper and child `yt-dlp.exe` / `ffmpeg.ex
 #### 🖼️ Universal Thumbnails
 YouTube via direct API. All other sites via `yt-dlp --get-thumbnail`. Both non-blocking.
 
+#### ✂️ Chapter Splitting
+Enable chapter splitting in the server settings to emit one file per YouTube `Chapters:` section while preserving embedded chapter markers.
+
 #### 📂 Open on Complete
 Click "Complete!" to open Explorer with the downloaded file pre-selected.
 

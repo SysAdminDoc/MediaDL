@@ -993,6 +993,7 @@ $btnNext.Add_Click({
                         AutoUpdate = $chkAutoUpdate.IsChecked
                         Notifications = $chkNotifications.IsChecked
                         SponsorBlock = $true
+                        SplitChapters = $false
                         YtDlpPath = $ytdlpPath
                         FfmpegPath = $ffmpegPath
                         ServerToken = [guid]::NewGuid().ToString('N')
@@ -1747,6 +1748,7 @@ $configDefaults = @{
     EmbedMetadata = $true
     EmbedThumbnail = $true
     EmbedChapters = $true
+    SplitChapters = $false
     EmbedSubs = $false
     SubLangs = "en"
     SponsorBlock = $false
@@ -1844,6 +1846,10 @@ function Start-Download {
     $title = $params.title
     $audioOnly = $params.audioOnly -eq $true
     $referer = $params.referer
+    $splitChapters = $config.SplitChapters -eq $true
+    if ($params.PSObject.Properties.Name -contains 'splitChapters') {
+        $splitChapters = [bool]$params.splitChapters
+    }
     $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?"
 
     # Format and quality from client (with safe defaults)
@@ -1885,9 +1891,11 @@ function Start-Download {
         if ($safeName.Length -gt 120) { $safeName = $safeName.Substring(0, 120).TrimEnd('_. ') }
         $outTpl = Join-Path $outDir "$safeName.$format"
     } elseif ($isPlaylist) {
-        $outTpl = Join-Path $outDir "%(playlist_title)s/%(title)s.$format"
+        $chapterSuffix = if ($splitChapters) { " - %(section_number)03d %(section_title)s" } else { "" }
+        $outTpl = Join-Path $outDir "%(playlist_title)s/%(title)s$chapterSuffix.$format"
     } else {
-        $outTpl = Join-Path $outDir "%(title)s.$format"
+        $chapterSuffix = if ($splitChapters) { " - %(section_number)03d %(section_title)s" } else { "" }
+        $outTpl = Join-Path $outDir "%(title)s$chapterSuffix.$format"
     }
 
     # Build quality format selector for yt-dlp
@@ -1915,6 +1923,7 @@ function Start-Download {
     if ($config.EmbedMetadata -eq $true) { $commonArgs += '--embed-metadata' }
     if ($config.EmbedThumbnail -eq $true) { $commonArgs += '--embed-thumbnail' }
     if ($config.EmbedChapters -eq $true) { $commonArgs += '--embed-chapters' }
+    if ($splitChapters) { $commonArgs += '--split-chapters' }
     if ($config.EmbedSubs -eq $true) {
         $commonArgs += '--embed-subs'
         $commonArgs += '--write-subs'
@@ -2005,7 +2014,7 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
         id = $id; url = $url; title = if ($title) { $title } else { "Unknown" }
         audioOnly = $audioOnly; status = "downloading"; progress = 0
         speed = ""; eta = ""; process = $proc; progressFile = $progressFile
-        startTime = (Get-Date); filename = ""; format = $format; quality = $quality
+        startTime = (Get-Date); filename = ""; format = $format; quality = $quality; splitChapters = $splitChapters
     }
 
     return $id
@@ -2182,7 +2191,7 @@ while ($listener.IsListening) {
                     url = $params.url; title = $params.title
                     audioOnly = $params.audioOnly; referer = $params.referer
                     format = $params.format; quality = $params.quality
-                    outputDir = $params.outputDir
+                    outputDir = $params.outputDir; splitChapters = $params.splitChapters
                 }
                 $id = Start-Download $ht
                 New-JsonResponse $context @{ id = $id; status = "downloading" }
@@ -2198,6 +2207,7 @@ while ($listener.IsListening) {
                         embedMetadata = $config.EmbedMetadata
                         embedThumbnail = $config.EmbedThumbnail
                         embedChapters = $config.EmbedChapters
+                        splitChapters = $config.SplitChapters
                         embedSubs = $config.EmbedSubs
                         subLangs = $config.SubLangs
                         sponsorBlock = $config.SponsorBlock
@@ -2228,7 +2238,7 @@ while ($listener.IsListening) {
                         }
                     }
                     # Update boolean/string fields
-                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','EmbedSubs','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
+                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','EmbedSubs','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
                     foreach ($f in $boolFields) {
                         $camel = $f.Substring(0,1).ToLower() + $f.Substring(1)
                         if ($cfgUpdate.PSObject.Properties.Name -contains $camel) {

@@ -51,6 +51,7 @@ $configDefaults = @{
     EmbedMetadata = $true
     EmbedThumbnail = $true
     EmbedChapters = $true
+    SplitChapters = $false
     EmbedSubs = $false
     SubLangs = "en"
     SponsorBlock = $false
@@ -392,10 +393,11 @@ $xamlString = @"
                         <TextBlock Text="POST-PROCESSING" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMuted}" Margin="0,0,0,8"/>
                         <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,0,0,16">
                             <StackPanel>
-                                <CheckBox x:Name="cfgEmbedMetadata" Content="Embed metadata (title, artist, date)"/>
-                                <CheckBox x:Name="cfgEmbedThumbnail" Content="Embed thumbnail as cover art"/>
-                                <CheckBox x:Name="cfgEmbedChapters" Content="Embed chapter markers"/>
-                                <CheckBox x:Name="cfgEmbedSubs" Content="Embed subtitles"/>
+                                 <CheckBox x:Name="cfgEmbedMetadata" Content="Embed metadata (title, artist, date)"/>
+                                 <CheckBox x:Name="cfgEmbedThumbnail" Content="Embed thumbnail as cover art"/>
+                                 <CheckBox x:Name="cfgEmbedChapters" Content="Embed chapter markers"/>
+                                 <CheckBox x:Name="cfgSplitChapters" Content="Split YouTube chapters into separate files"/>
+                                 <CheckBox x:Name="cfgEmbedSubs" Content="Embed subtitles"/>
                                 <StackPanel Orientation="Horizontal" Margin="20,4,0,0">
                                     <TextBlock Text="Languages:" FontSize="11" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                                     <TextBox x:Name="cfgSubLangs" Width="120" FontSize="11"/>
@@ -484,6 +486,7 @@ $btnBrowseAudio = $window.FindName("btnBrowseAudio")
 $cfgEmbedMetadata = $window.FindName("cfgEmbedMetadata")
 $cfgEmbedThumbnail = $window.FindName("cfgEmbedThumbnail")
 $cfgEmbedChapters = $window.FindName("cfgEmbedChapters")
+$cfgSplitChapters = $window.FindName("cfgSplitChapters")
 $cfgEmbedSubs = $window.FindName("cfgEmbedSubs")
 $cfgSubLangs = $window.FindName("cfgSubLangs")
 $cfgSponsorBlock = $window.FindName("cfgSponsorBlock")
@@ -507,6 +510,7 @@ function Load-SettingsUI {
     $cfgEmbedMetadata.IsChecked = $c.EmbedMetadata -eq $true
     $cfgEmbedThumbnail.IsChecked = $c.EmbedThumbnail -eq $true
     $cfgEmbedChapters.IsChecked = $c.EmbedChapters -eq $true
+    $cfgSplitChapters.IsChecked = $c.SplitChapters -eq $true
     $cfgEmbedSubs.IsChecked = $c.EmbedSubs -eq $true
     $cfgSubLangs.Text = "$($c.SubLangs)"
     $cfgSponsorBlock.IsChecked = $c.SponsorBlock -eq $true
@@ -662,6 +666,10 @@ function Start-Server {
             $url = $params.url; $title = $params.title
             $audioOnly = $params.audioOnly -eq $true
             $referer = $params.referer
+            $splitChapters = $config.SplitChapters -eq $true
+            if ($params.PSObject.Properties.Name -contains 'splitChapters') {
+                $splitChapters = [bool]$params.splitChapters
+            }
             $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?"
 
             $allowedVF = @('mp4','mkv','webm'); $allowedAF = @('mp3','m4a','opus','flac','wav')
@@ -683,8 +691,9 @@ function Start-Server {
 
             $ffLoc = Split-Path $config.FfmpegPath -Parent
             $isPlaylist = $url -match '[?&]list=' -and $url -notmatch '[?&]v='
-            if ($isPlaylist) { $outTpl = Join-Path $outDir "%(playlist_title)s/%(title)s.$format" }
-            else { $outTpl = Join-Path $outDir "%(title)s.$format" }
+            $chapterSuffix = if ($splitChapters) { " - %(section_number)03d %(section_title)s" } else { "" }
+            if ($isPlaylist) { $outTpl = Join-Path $outDir "%(playlist_title)s/%(title)s$chapterSuffix.$format" }
+            else { $outTpl = Join-Path $outDir "%(title)s$chapterSuffix.$format" }
 
             $fmtSel = if ($quality -eq 'best') { "bestvideo+bestaudio/best" } else { "bestvideo[height<=$quality]+bestaudio/best[height<=$quality]/best" }
 
@@ -695,6 +704,7 @@ function Start-Server {
             if ($config.EmbedMetadata -eq $true) { $args += '--embed-metadata' }
             if ($config.EmbedThumbnail -eq $true) { $args += '--embed-thumbnail' }
             if ($config.EmbedChapters -eq $true) { $args += '--embed-chapters' }
+            if ($splitChapters) { $args += '--split-chapters' }
             if ($config.EmbedSubs -eq $true) { $args += '--embed-subs'; $args += '--write-subs'; $args += '--write-auto-subs'; $args += '--sub-langs'; $args += ($config.SubLangs -replace '[^a-zA-Z0-9,\-]','') }
             if ($config.SponsorBlock -eq $true) { $action = if ($config.SponsorBlockAction -eq 'mark') {'mark'} else {'remove'}; $args += "--sponsorblock-$action"; $args += 'all' }
             if ($config.DownloadArchive -eq $true) { $args += '--download-archive'; $args += $state.ArchivePath }
@@ -717,7 +727,7 @@ function Start-Server {
             $state.Downloads[$id] = [hashtable]::Synchronized(@{
                 id=$id; url=$url; title=if($title){$title}else{"Unknown"}; audioOnly=$audioOnly
                 status="downloading"; progress=0; speed=""; eta=""; process=$proc
-                progressFile=$progressFile; startTime=(Get-Date); filename=""; format=$format; quality=$quality
+                progressFile=$progressFile; startTime=(Get-Date); filename=""; format=$format; quality=$quality; splitChapters=$splitChapters
             })
             Write-SLog "[$id] Started: $($url.Substring(0,[Math]::Min(60,$url.Length)))..."
             return $id
@@ -860,7 +870,7 @@ function Start-Server {
                     }
                     '^/config$' {
                         if ($method -eq 'GET') {
-                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;embedSubs=$config.EmbedSubs;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
+                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
                         } else { Send-Json $ctx @{error="Use GUI settings"} 405 }
                     }
                     '^/cancel/(.+)$' {
@@ -972,6 +982,7 @@ $btnSaveSettings.Add_Click({
     $script:Config.EmbedMetadata = $cfgEmbedMetadata.IsChecked
     $script:Config.EmbedThumbnail = $cfgEmbedThumbnail.IsChecked
     $script:Config.EmbedChapters = $cfgEmbedChapters.IsChecked
+    $script:Config.SplitChapters = $cfgSplitChapters.IsChecked
     $script:Config.EmbedSubs = $cfgEmbedSubs.IsChecked
     $script:Config.SubLangs = $cfgSubLangs.Text
     $script:Config.SponsorBlock = $cfgSponsorBlock.IsChecked

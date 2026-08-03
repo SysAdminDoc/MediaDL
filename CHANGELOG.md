@@ -9,6 +9,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Instagram-specific extraction for Stories, Highlights, Reels, and embedded CDN video JSON.
 - Added: TikTok SSR extraction with watermark-free play URL priority and wmplay fallback.
 - Added: X/Twitter Spaces HLS audio discovery and audio-element scanning.
+- Added: Optional YouTube chapter splitting with section-numbered output files.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 
