@@ -91,6 +91,8 @@ Scans every page for video and audio elements. Attaches floating download pills 
 
 TikTok uses server-rendered play URLs first for watermark-free MP4, with `wmplay`/download fallback when only a watermarked stream is exposed.
 
+X Spaces discovers live `.m3u8` audio from resource timing and embedded playback data.
+
 #### 🛡️ 3-Tier Failover
 HTTP server → protocol handler → GM_download. If one method fails, the next activates seamlessly.
 

@@ -188,6 +188,10 @@
         'player.vimeo.com': 'https://vimeo.com/',
         'instagram.com': 'https://www.instagram.com/',
         'www.instagram.com': 'https://www.instagram.com/',
+        'twitter.com': 'https://twitter.com/',
+        'www.twitter.com': 'https://twitter.com/',
+        'x.com': 'https://x.com/',
+        'www.x.com': 'https://x.com/',
     };
 
     // =========================================================================
@@ -659,6 +663,10 @@
     function scanForEmbeds() {
         if (!document.body) return;
         scanVideoElements();
+        const host = location.hostname.replace('www.', '');
+        if ((host === 'x.com' || host === 'twitter.com') && /\/i\/spaces\//i.test(location.pathname)) {
+            scanAudioElements();
+        }
         // Scan iframes with known video sources
         document.querySelectorAll('iframe[src]').forEach(el => {
             if (el.hasAttribute(CONFIG.attr)) return;
@@ -691,8 +699,25 @@
             if (anchor !== video) anchor.setAttribute(CONFIG.attr, '1');
 
             const label = getSiteLabel(url);
-            const isAudio = SITE_CONFIGS[location.hostname.replace('www.','')]?.audioOnly;
+            const currentHost = location.hostname.replace('www.', '');
+            const isAudio = SITE_CONFIGS[currentHost]?.audioOnly ||
+                ((currentHost === 'x.com' || currentHost === 'twitter.com') &&
+                    /\/i\/spaces\//i.test(location.pathname));
             registerPill(anchor, url, label, '#00b894', isAudio);
+        });
+    }
+
+    function scanAudioElements() {
+        if (!document.body) return;
+        document.querySelectorAll('audio').forEach(audio => {
+            if (audio.hasAttribute(CONFIG.attr)) return;
+            const url = extractPlatformUrl(audio);
+            if (!url) { audio.setAttribute(CONFIG.attr, 'skip'); return; }
+            audio.setAttribute(CONFIG.attr, '1');
+            const anchor = findVideoContainer(audio) || audio;
+            if (anchor.hasAttribute(CONFIG.attr) && anchor !== audio) return;
+            if (anchor !== audio) anchor.setAttribute(CONFIG.attr, '1');
+            registerPill(anchor, url, getSiteLabel(url), '#6c5ce7', true);
         });
     }
 
@@ -722,6 +747,12 @@
         // the server-rendered hydration payload.
         if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
             return extractTikTokUrl(video);
+        }
+
+        // X/Twitter Spaces expose an HLS audio room rather than a normal
+        // tweet video element.
+        if (host === 'twitter.com' || host === 'x.com' || host.endsWith('.twitter.com')) {
+            return extractTwitterUrl(video);
         }
 
         // Facebook - multi-strategy extraction
@@ -918,6 +949,75 @@
             return /\.(?:mp4|m3u8)(?:[?#]|$)/i.test(parsed.pathname) ||
                 /(?:tiktokcdn\.com|ibytedtos\.com|muscdn\.com|byteoversea\.com)$/i.test(parsed.hostname) &&
                 /(?:video|play|download|wmplay|v\/)/i.test(parsed.href);
+        } catch { return false; }
+    }
+
+    // =========================================================================
+    // TWITTER/X SPACES EXTRACTION
+    // =========================================================================
+    function extractTwitterUrl(media) {
+        const isSpace = /\/i\/spaces\//i.test(location.pathname);
+        const directCandidates = [
+            media.currentSrc,
+            media.src,
+            media.getAttribute('data-src'),
+            media.getAttribute('data-playback-url'),
+            media.getAttribute('data-hls-url')
+        ];
+        const source = media.querySelector('source[src]');
+        if (source) directCandidates.push(source.src || source.getAttribute('src'));
+        const direct = directCandidates.find(url => url && !url.startsWith('blob:') && isTwitterSpaceAudioUrl(url));
+        if (direct) return direct;
+        if (isSpace) {
+            const hls = extractTwitterSpaceHlsUrl();
+            if (hls) {
+                console.log('MediaDL [X]: Space HLS URL found');
+                return hls;
+            }
+        }
+
+        // Preserve generic tweet handling for non-Space pages.
+        const src = media.src || media.currentSrc || '';
+        if (src && !src.startsWith('blob:') && src.startsWith('http')) return src;
+        return location.href;
+    }
+
+    function extractTwitterSpaceHlsUrl() {
+        const candidates = [];
+        try {
+            performance.getEntriesByType('resource').forEach(entry => {
+                if (entry.name && isTwitterSpaceAudioUrl(entry.name)) candidates.push(entry.name);
+            });
+        } catch {}
+
+        const scripts = document.querySelectorAll(
+            'script[type="application/json"], script#__NEXT_DATA__, script:not([src])'
+        );
+        for (const script of scripts) {
+            const raw = (script.textContent || '').slice(0, 2000000);
+            if (!/(m3u8|hls|playback_url|stream_url|audio_url|space)/i.test(raw)) continue;
+            const text = raw
+                .replace(/\\"/g, '"')
+                .replace(/\\\//g, '/')
+                .replace(/\\u0026/gi, '&')
+                .replace(/\\u003d/gi, '=')
+                .replace(/\\u002f/gi, '/');
+            const keyed = /"(?:playback_url|playbackUrl|stream_url|streamUrl|audio_url|hls_url|hlsUrl)"\s*:\s*"([^"]+)"/gi;
+            let match;
+            while ((match = keyed.exec(text))) candidates.push(match[1]);
+            const urls = /https?:\/\/[^"'\\\s]+(?:m3u8|audio|hls)[^"'\\\s]*/gi;
+            while ((match = urls.exec(text))) candidates.push(match[0]);
+        }
+        return candidates.find(isTwitterSpaceAudioUrl) || null;
+    }
+
+    function isTwitterSpaceAudioUrl(url) {
+        try {
+            const parsed = new URL(url, location.href);
+            if (!/^https?:$/i.test(parsed.protocol)) return false;
+            return /\.m3u8(?:[?#]|$)/i.test(parsed.pathname) ||
+                /(?:video\.twimg\.com|audio|hls)/i.test(parsed.hostname + parsed.pathname) &&
+                /(?:playlist|stream|audio|space)/i.test(parsed.href);
         } catch { return false; }
     }
 
