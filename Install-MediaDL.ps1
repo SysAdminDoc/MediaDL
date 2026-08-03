@@ -1752,6 +1752,18 @@ $form.Add_FormClosed({
 param([switch]$Debug)
 
 $ErrorActionPreference = 'Continue'
+if (-not ("MediaDLProcessControl" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class MediaDLProcessControl {
+    [DllImport("ntdll.dll")] private static extern int NtSuspendProcess(IntPtr processHandle);
+    [DllImport("ntdll.dll")] private static extern int NtResumeProcess(IntPtr processHandle);
+    public static bool Suspend(IntPtr processHandle) { return NtSuspendProcess(processHandle) == 0; }
+    public static bool Resume(IntPtr processHandle) { return NtResumeProcess(processHandle) == 0; }
+}
+"@
+}
 $PORT = 9751
 $MAX_CONCURRENT = 3
 $CLEANUP_MINUTES = 5
@@ -1964,6 +1976,42 @@ function Get-ActiveSiteCount {
     @($downloads.Values | Where-Object {
         $_.status -match 'downloading|merging|extracting' -and (Get-SiteKey $_.url) -eq $Site
     }).Count
+}
+
+function Get-DownloadProcessIds {
+    param([int]$RootId)
+    $ids = @($RootId)
+    $pending = [System.Collections.Generic.Queue[int]]::new()
+    $pending.Enqueue($RootId)
+    while ($pending.Count -gt 0) {
+        $parent = $pending.Dequeue()
+        try {
+            $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" -ErrorAction SilentlyContinue)
+            foreach ($child in $children) {
+                $childId = [int]$child.ProcessId
+                if ($ids -notcontains $childId) { $ids += $childId; $pending.Enqueue($childId) }
+            }
+        } catch {}
+    }
+    return $ids
+}
+
+function Set-DownloadSuspended {
+    param($Download, [bool]$Suspended)
+    if (-not $Download.process -or $Download.process.HasExited) { return $false }
+    $ok = $true
+    foreach ($processId in (Get-DownloadProcessIds $Download.process.Id)) {
+        try {
+            $child = Get-Process -Id $processId -ErrorAction Stop
+            $changed = if ($Suspended) {
+                [MediaDLProcessControl]::Suspend($child.Handle)
+            } else {
+                [MediaDLProcessControl]::Resume($child.Handle)
+            }
+            if (-not $changed) { $ok = $false }
+        } catch { $ok = $false }
+    }
+    return $ok
 }
 
 function New-JsonResponse {
@@ -2208,6 +2256,7 @@ function Update-Downloads {
     foreach ($id in @($downloads.Keys)) {
         $dl = $downloads[$id]
         if ($dl.status -eq 'complete' -or $dl.status -eq 'failed' -or $dl.status -eq 'cancelled') { continue }
+        if ($dl.status -eq 'paused') { continue }
         if (-not $dl.process) { continue }
 
         if (Test-Path $dl.progressFile) {
@@ -2447,6 +2496,32 @@ while ($listener.IsListening) {
                     New-JsonResponse $context @{ updated = $true }
                 }
                 else { New-JsonResponse $context @{ error = "Method not allowed" } 405 }
+            }
+            '^/pause/(.+)$' {
+                if ($method -ne 'POST') { New-JsonResponse $context @{ error = "Method not allowed" } 405; break }
+                $pauseId = $matches[1]
+                if (-not $downloads.ContainsKey($pauseId)) { New-JsonResponse $context @{ error = "Not found" } 404; break }
+                $dl = $downloads[$pauseId]
+                if ($dl.status -eq 'paused') { New-JsonResponse $context @{ id = $pauseId; status = "paused" }; break }
+                if ($dl.status -match 'complete|failed|cancelled' -or -not $dl.process) {
+                    New-JsonResponse $context @{ error = "Download cannot be paused"; status = $dl.status } 409
+                    break
+                }
+                if (Set-DownloadSuspended $dl $true) {
+                    $dl.status = "paused"; Save-QueueRecord $dl
+                    New-JsonResponse $context @{ id = $pauseId; status = "paused" }
+                } else { New-JsonResponse $context @{ error = "Could not suspend download" } 500 }
+            }
+            '^/resume/(.+)$' {
+                if ($method -ne 'POST') { New-JsonResponse $context @{ error = "Method not allowed" } 405; break }
+                $resumeId = $matches[1]
+                if (-not $downloads.ContainsKey($resumeId)) { New-JsonResponse $context @{ error = "Not found" } 404; break }
+                $dl = $downloads[$resumeId]
+                if ($dl.status -ne 'paused') { New-JsonResponse $context @{ id = $resumeId; status = $dl.status }; break }
+                if (Set-DownloadSuspended $dl $false) {
+                    $dl.status = "downloading"; Save-QueueRecord $dl
+                    New-JsonResponse $context @{ id = $resumeId; status = "downloading" }
+                } else { New-JsonResponse $context @{ error = "Could not resume download" } 500 }
             }
             '^/status/(.+)$' {
                 $id = $matches[1]

@@ -13,6 +13,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Live YouTube/Twitch detection with a record-from-now action and protocol fallback.
 - Added: SQLite WAL queue journal with interrupted-item restoration across server restarts.
 - Added: Bandwidth throttle slider and per-site concurrency enforcement for active downloads.
+- Added: Authenticated pause/resume endpoints that suspend and resume yt-dlp process trees.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

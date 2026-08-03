@@ -251,6 +251,8 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 | `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer}`. Returns `{id}` |
 | `GET` | `/status/:id` | 🔐 | `{status, progress, speed, eta, filename}` |
 | `GET` | `/queue` | 🔐 | Array of all active downloads with status |
+| `POST` | `/pause/:id` | 🔐 | Suspend a download process tree |
+| `POST` | `/resume/:id` | 🔐 | Resume a paused download |
 | `DELETE` | `/cancel/:id` | 🔐 | Cancel and clean up a download |
 | `GET` | `/shutdown` | 🔐 | Gracefully stop the server |
 

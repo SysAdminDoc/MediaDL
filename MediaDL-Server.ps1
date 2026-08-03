@@ -29,6 +29,18 @@ Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+if (-not ("MediaDLProcessControl" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class MediaDLProcessControl {
+    [DllImport("ntdll.dll")] private static extern int NtSuspendProcess(IntPtr processHandle);
+    [DllImport("ntdll.dll")] private static extern int NtResumeProcess(IntPtr processHandle);
+    public static bool Suspend(IntPtr processHandle) { return NtSuspendProcess(processHandle) == 0; }
+    public static bool Resume(IntPtr processHandle) { return NtResumeProcess(processHandle) == 0; }
+}
+"@
+}
 
 # ── Paths ──
 $script:InstallPath = $PSScriptRoot
@@ -763,6 +775,42 @@ VALUES (
             }).Count
         }
 
+        function Get-DownloadProcessIds {
+            param([int]$RootId)
+            $ids = @($RootId)
+            $pending = [System.Collections.Generic.Queue[int]]::new()
+            $pending.Enqueue($RootId)
+            while ($pending.Count -gt 0) {
+                $parent = $pending.Dequeue()
+                try {
+                    $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" -ErrorAction SilentlyContinue)
+                    foreach ($child in $children) {
+                        $childId = [int]$child.ProcessId
+                        if ($ids -notcontains $childId) { $ids += $childId; $pending.Enqueue($childId) }
+                    }
+                } catch {}
+            }
+            return $ids
+        }
+
+        function Set-DownloadSuspended {
+            param($Download, [bool]$Suspended)
+            if (-not $Download.process -or $Download.process.HasExited) { return $false }
+            $ok = $true
+            foreach ($processId in (Get-DownloadProcessIds $Download.process.Id)) {
+                try {
+                    $child = Get-Process -Id $processId -ErrorAction Stop
+                    $changed = if ($Suspended) {
+                        [MediaDLProcessControl]::Suspend($child.Handle)
+                    } else {
+                        [MediaDLProcessControl]::Resume($child.Handle)
+                    }
+                    if (-not $changed) { $ok = $false }
+                } catch { $ok = $false }
+            }
+            return $ok
+        }
+
         function Read-FileTail {
             param([string]$Path, [int]$Bytes = 4096)
             try {
@@ -881,6 +929,7 @@ VALUES (
             foreach ($id in @($state.Downloads.Keys)) {
                 $dl = $state.Downloads[$id]
                 if ($dl.status -eq 'complete' -or $dl.status -eq 'failed' -or $dl.status -eq 'cancelled') { continue }
+                if ($dl.status -eq 'paused') { continue }
                 if (-not $dl.process) { continue }
                 if (Test-Path $dl.progressFile) {
                     $tail = Read-FileTail $dl.progressFile
@@ -1026,6 +1075,29 @@ VALUES (
                         if ($method -eq 'GET') {
                             Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
                         } else { Send-Json $ctx @{error="Use GUI settings"} 405 }
+                    }
+                    '^/pause/(.+)$' {
+                        if ($method -ne 'POST') { Send-Json $ctx @{error="Method not allowed"} 405; break }
+                        $pauseId = $matches[1]
+                        if (-not $state.Downloads.ContainsKey($pauseId)) { Send-Json $ctx @{error="Not found"} 404; break }
+                        $dl = $state.Downloads[$pauseId]
+                        if ($dl.status -eq 'paused') { Send-Json $ctx @{id=$pauseId;status="paused"}; break }
+                        if ($dl.status -match 'complete|failed|cancelled' -or -not $dl.process) { Send-Json $ctx @{error="Download cannot be paused";status=$dl.status} 409; break }
+                        if (Set-DownloadSuspended $dl $true) {
+                            $dl.status = "paused"; Save-QueueRecord $dl
+                            Send-Json $ctx @{id=$pauseId;status="paused"}
+                        } else { Send-Json $ctx @{error="Could not suspend download"} 500 }
+                    }
+                    '^/resume/(.+)$' {
+                        if ($method -ne 'POST') { Send-Json $ctx @{error="Method not allowed"} 405; break }
+                        $resumeId = $matches[1]
+                        if (-not $state.Downloads.ContainsKey($resumeId)) { Send-Json $ctx @{error="Not found"} 404; break }
+                        $dl = $state.Downloads[$resumeId]
+                        if ($dl.status -ne 'paused') { Send-Json $ctx @{id=$resumeId;status=$dl.status} ; break }
+                        if (Set-DownloadSuspended $dl $false) {
+                            $dl.status = "downloading"; Save-QueueRecord $dl
+                            Send-Json $ctx @{id=$resumeId;status="downloading"}
+                        } else { Send-Json $ctx @{error="Could not resume download"} 500 }
                     }
                     '^/cancel/(.+)$' {
                         if ($method -ne 'DELETE') { Send-Json $ctx @{error="Method not allowed"} 405; break }
