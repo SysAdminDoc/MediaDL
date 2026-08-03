@@ -105,6 +105,7 @@ HTTP server → protocol handler → GM_download. If one method fails, the next 
 Lightweight HTTP server on `127.0.0.1:9751`. Concurrent downloads, progress tracking, queue management. Starts on login.
 
 Queue requests and interrupted states persist in a SQLite WAL journal at `%LOCALAPPDATA%\MediaDL\queue.db`.
+The settings panel also exposes a bandwidth slider and per-site concurrency cap to keep busy hosts fair.
 
 #### 🔑 Zero-Config Auth
 Server token negotiated automatically via `X-MDL-Client` header handshake. No manual setup.

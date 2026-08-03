@@ -1023,6 +1023,8 @@ $btnNext.Add_Click({
                         Notifications = $chkNotifications.IsChecked
                         SponsorBlock = $true
                         SplitChapters = $false
+                        BandwidthLimitKbps = 0
+                        SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
                         FfmpegPath = $ffmpegPath
                         ServerToken = [guid]::NewGuid().ToString('N')
@@ -1773,6 +1775,8 @@ Write-Log "=== Server v$SERVER_VERSION starting on port $PORT ==="
 $configPath = Join-Path $PSScriptRoot "config.json"
 if (!(Test-Path $configPath)) { Write-Log "FATAL: config.json not found"; exit 1 }
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
+$SITE_CONCURRENCY_CAP = [int]$config.SiteConcurrencyCap
+if ($SITE_CONCURRENCY_CAP -lt 1 -or $SITE_CONCURRENCY_CAP -gt 8) { $SITE_CONCURRENCY_CAP = 1 }
 
 # Ensure config has all expected properties with defaults
 $configDefaults = @{
@@ -1786,6 +1790,8 @@ $configDefaults = @{
     SponsorBlock = $false
     SponsorBlockAction = "remove"
     ConcurrentFragments = 4
+    BandwidthLimitKbps = 0
+    SiteConcurrencyCap = 1
     DownloadArchive = $true
     AutoUpdateYtDlp = $true
     RateLimit = ""
@@ -1948,6 +1954,18 @@ function Restore-QueueEntries {
     if ($rows.Count -gt 0) { Write-Log "Restored $($rows.Count) interrupted queue item(s) from SQLite" }
 }
 
+function Get-SiteKey {
+    param([string]$Url)
+    try { return ([uri]$Url).Host.ToLowerInvariant() } catch { return 'unknown' }
+}
+
+function Get-ActiveSiteCount {
+    param([string]$Site)
+    @($downloads.Values | Where-Object {
+        $_.status -match 'downloading|merging|extracting' -and (Get-SiteKey $_.url) -eq $Site
+    }).Count
+}
+
 function New-JsonResponse {
     param($context, $data, [int]$status = 200)
     $json = $data | ConvertTo-Json -Depth 5 -Compress
@@ -2087,7 +2105,11 @@ function Start-Download {
     }
 
     # Rate limiting
-    if ($config.RateLimit -and $config.RateLimit -match '^\d+[KMG]?$') {
+    $bandwidthLimit = [int]$config.BandwidthLimitKbps
+    if ($bandwidthLimit -gt 0) {
+        $commonArgs += '--limit-rate'
+        $commonArgs += ("{0}K" -f $bandwidthLimit)
+    } elseif ($config.RateLimit -and $config.RateLimit -match '^\d+[KMG]?$') {
         $commonArgs += '--limit-rate'
         $commonArgs += $config.RateLimit
     }
@@ -2334,6 +2356,12 @@ while ($listener.IsListening) {
                     New-JsonResponse $context @{ error = "Too many concurrent downloads"; active = $active } 429
                     break
                 }
+                $site = Get-SiteKey $params.url
+                $siteActive = Get-ActiveSiteCount $site
+                if ($siteActive -ge $SITE_CONCURRENCY_CAP) {
+                    New-JsonResponse $context @{ error = "Per-site concurrency limit reached"; site = $site; active = $siteActive; limit = $SITE_CONCURRENCY_CAP } 429
+                    break
+                }
 
                 $ht = @{
                     url = $params.url; title = $params.title
@@ -2362,6 +2390,8 @@ while ($listener.IsListening) {
                         sponsorBlock = $config.SponsorBlock
                         sponsorBlockAction = $config.SponsorBlockAction
                         concurrentFragments = $config.ConcurrentFragments
+                        bandwidthLimitKbps = $config.BandwidthLimitKbps
+                        siteConcurrencyCap = $config.SiteConcurrencyCap
                         downloadArchive = $config.DownloadArchive
                         autoUpdateYtDlp = $config.AutoUpdateYtDlp
                         rateLimit = $config.RateLimit
@@ -2403,6 +2433,14 @@ while ($listener.IsListening) {
                     if ($cfgUpdate.PSObject.Properties.Name -contains 'concurrentFragments') {
                         $v = [int]$cfgUpdate.concurrentFragments
                         if ($v -ge 1 -and $v -le 32) { $config.ConcurrentFragments = $v }
+                    }
+                    if ($cfgUpdate.PSObject.Properties.Name -contains 'bandwidthLimitKbps') {
+                        $v = [int]$cfgUpdate.bandwidthLimitKbps
+                        if ($v -ge 0 -and $v -le 10000) { $config.BandwidthLimitKbps = $v }
+                    }
+                    if ($cfgUpdate.PSObject.Properties.Name -contains 'siteConcurrencyCap') {
+                        $v = [int]$cfgUpdate.siteConcurrencyCap
+                        if ($v -ge 1 -and $v -le 8) { $config.SiteConcurrencyCap = $v }
                     }
                     $config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
                     Write-Log "Config updated"

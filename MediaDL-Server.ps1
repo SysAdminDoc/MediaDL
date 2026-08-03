@@ -57,6 +57,8 @@ $configDefaults = @{
     SponsorBlock = $false
     SponsorBlockAction = "remove"
     ConcurrentFragments = 4
+    BandwidthLimitKbps = 0
+    SiteConcurrencyCap = 1
     DownloadArchive = $true
     AutoUpdateYtDlp = $true
     RateLimit = ""
@@ -414,10 +416,18 @@ $xamlString = @"
                                     <TextBlock Text="Concurrent fragments:" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <TextBox x:Name="cfgFragments" Width="50" FontSize="12"/>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                    <TextBlock Text="Rate limit (e.g. 500K, 2M, blank=unlimited):" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <TextBox x:Name="cfgRateLimit" Width="80" FontSize="12"/>
-                                </StackPanel>
+                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                     <TextBlock Text="Rate limit (e.g. 500K, 2M, blank=unlimited):" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                     <TextBox x:Name="cfgRateLimit" Width="80" FontSize="12"/>
+                                 </StackPanel>
+                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                     <TextBlock Text="Bandwidth slider (Kbps, 0=unlimited):" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                     <Slider x:Name="cfgBandwidth" Width="180" Minimum="0" Maximum="10000" TickFrequency="500" IsSnapToTickEnabled="True"/>
+                                 </StackPanel>
+                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                     <TextBlock Text="Per-site concurrency:" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                     <Slider x:Name="cfgSiteConcurrency" Width="180" Minimum="1" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True"/>
+                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
                                     <TextBlock Text="Proxy (e.g. socks5://host:port, blank=none):" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <TextBox x:Name="cfgProxy" Width="200" FontSize="12"/>
@@ -492,6 +502,8 @@ $cfgSubLangs = $window.FindName("cfgSubLangs")
 $cfgSponsorBlock = $window.FindName("cfgSponsorBlock")
 $cfgFragments = $window.FindName("cfgFragments")
 $cfgRateLimit = $window.FindName("cfgRateLimit")
+$cfgBandwidth = $window.FindName("cfgBandwidth")
+$cfgSiteConcurrency = $window.FindName("cfgSiteConcurrency")
 $cfgProxy = $window.FindName("cfgProxy")
 $cfgAutoUpdate = $window.FindName("cfgAutoUpdate")
 $cfgArchive = $window.FindName("cfgArchive")
@@ -516,6 +528,8 @@ function Load-SettingsUI {
     $cfgSponsorBlock.IsChecked = $c.SponsorBlock -eq $true
     $cfgFragments.Text = "$($c.ConcurrentFragments)"
     $cfgRateLimit.Text = "$($c.RateLimit)"
+    $cfgBandwidth.Value = [double]$c.BandwidthLimitKbps
+    $cfgSiteConcurrency.Value = [double]$c.SiteConcurrencyCap
     $cfgProxy.Text = "$($c.Proxy)"
     $cfgAutoUpdate.IsChecked = $c.AutoUpdateYtDlp -eq $true
     $cfgArchive.IsChecked = $c.DownloadArchive -eq $true
@@ -624,6 +638,8 @@ function Start-Server {
         $PORT = $state.Port
         $MAX_CONCURRENT = 3
         $config = $state.Config
+        $SITE_CONCURRENCY_CAP = [int]$config.SiteConcurrencyCap
+        if ($SITE_CONCURRENCY_CAP -lt 1 -or $SITE_CONCURRENCY_CAP -gt 8) { $SITE_CONCURRENCY_CAP = 1 }
 
         function Write-SLog { param([string]$msg); $state.Log += "$(Get-Date -Format 'HH:mm:ss') $msg`n" }
 
@@ -735,6 +751,18 @@ VALUES (
             if ($rows.Count -gt 0) { Write-SLog "Restored $($rows.Count) interrupted queue item(s) from SQLite" }
         }
 
+        function Get-SiteKey {
+            param([string]$Url)
+            try { return ([uri]$Url).Host.ToLowerInvariant() } catch { return 'unknown' }
+        }
+
+        function Get-ActiveSiteCount {
+            param([string]$Site)
+            @($state.Downloads.Values | Where-Object {
+                $_.status -match 'downloading|merging|extracting' -and (Get-SiteKey $_.url) -eq $Site
+            }).Count
+        }
+
         function Read-FileTail {
             param([string]$Path, [int]$Bytes = 4096)
             try {
@@ -817,7 +845,12 @@ VALUES (
             if ($config.EmbedSubs -eq $true) { $args += '--embed-subs'; $args += '--write-subs'; $args += '--write-auto-subs'; $args += '--sub-langs'; $args += ($config.SubLangs -replace '[^a-zA-Z0-9,\-]','') }
             if ($config.SponsorBlock -eq $true) { $action = if ($config.SponsorBlockAction -eq 'mark') {'mark'} else {'remove'}; $args += "--sponsorblock-$action"; $args += 'all' }
             if ($config.DownloadArchive -eq $true) { $args += '--download-archive'; $args += $state.ArchivePath }
-            if ($config.RateLimit -and $config.RateLimit -match '^\d+[KMG]?$') { $args += '--limit-rate'; $args += $config.RateLimit }
+            $bandwidthLimit = [int]$config.BandwidthLimitKbps
+            if ($bandwidthLimit -gt 0) {
+                $args += '--limit-rate'; $args += ("{0}K" -f $bandwidthLimit)
+            } elseif ($config.RateLimit -and $config.RateLimit -match '^\d+[KMG]?$') {
+                $args += '--limit-rate'; $args += $config.RateLimit
+            }
             if ($config.Proxy -and $config.Proxy -match '^(socks|https?):') { $args += '--proxy'; $args += $config.Proxy }
             if ($referer) { $args += '--referer'; $args += $referer }
             if ($isPlaylist) { $args += '--yes-playlist' }
@@ -964,6 +997,12 @@ VALUES (
                         if (-not $p.url) { Send-Json $ctx @{error="Missing url"} 400; break }
                         $active = @($state.Downloads.Values | Where-Object { $_.status -match 'downloading|merging|extracting' }).Count
                         if ($active -ge $MAX_CONCURRENT) { Send-Json $ctx @{error="Too many concurrent downloads";active=$active} 429; break }
+                        $site = Get-SiteKey $p.url
+                        $siteActive = Get-ActiveSiteCount $site
+                        if ($siteActive -ge $SITE_CONCURRENCY_CAP) {
+                            Send-Json $ctx @{error="Per-site concurrency limit reached";site=$site;active=$siteActive;limit=$SITE_CONCURRENCY_CAP} 429
+                            break
+                        }
                         $id = Start-Download $p
                         Send-Json $ctx @{id=$id;status="downloading"}
                     }
@@ -985,7 +1024,7 @@ VALUES (
                     }
                     '^/config$' {
                         if ($method -eq 'GET') {
-                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
+                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
                         } else { Send-Json $ctx @{error="Use GUI settings"} 405 }
                     }
                     '^/cancel/(.+)$' {
@@ -1110,6 +1149,8 @@ $btnSaveSettings.Add_Click({
     $script:Config.SponsorBlock = $cfgSponsorBlock.IsChecked
     $v = 0; if ([int]::TryParse($cfgFragments.Text, [ref]$v) -and $v -ge 1 -and $v -le 32) { $script:Config.ConcurrentFragments = $v }
     $script:Config.RateLimit = $cfgRateLimit.Text
+    $script:Config.BandwidthLimitKbps = [int][Math]::Max(0, [Math]::Min(10000, $cfgBandwidth.Value))
+    $script:Config.SiteConcurrencyCap = [int][Math]::Max(1, [Math]::Min(8, $cfgSiteConcurrency.Value))
     $script:Config.Proxy = $cfgProxy.Text
     $script:Config.AutoUpdateYtDlp = $cfgAutoUpdate.IsChecked
     $script:Config.DownloadArchive = $cfgArchive.IsChecked
