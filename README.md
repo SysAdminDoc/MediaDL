@@ -174,8 +174,8 @@ Click "Complete!" to open Explorer with the downloaded file pre-selected.
 #### 🪟 Win11 Native
 DWM rounded corners via `DwmSetWindowAttribute`. Degrades gracefully on Windows 10.
 
-#### 🔄 yt-dlp Auto-Update
-Self-update throttled to once per 24 hours via timestamp file.
+#### 🔄 Verified Dependency Updates
+The background server checks yt-dlp and ffmpeg once per day, downloads only the expected GitHub release assets, and replaces them only after their SHA-256 release digests match. Missing digests or unexpected download origins fail closed and leave the installed tools untouched.
 
 Completion toasts are opt-in and fail safely when WinRT toast registration is unavailable.
 

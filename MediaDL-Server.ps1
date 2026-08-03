@@ -482,7 +482,7 @@ $xamlString = @"
                         <TextBlock Text="BEHAVIOR" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextMuted}" Margin="0,0,0,8"/>
                         <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,0,0,16">
                             <StackPanel>
-                                <CheckBox x:Name="cfgAutoUpdate" Content="Auto-update yt-dlp on server start"/>
+                                <CheckBox x:Name="cfgAutoUpdate" Content="Auto-update yt-dlp and ffmpeg daily"/>
                                 <CheckBox x:Name="cfgToastNotifications" Content="Show Windows toast on completion"/>
                                 <CheckBox x:Name="cfgArchive" Content="Skip already-downloaded videos (archive.txt)"/>
                                 <CheckBox x:Name="cfgCloseToTray" Content="Close to system tray instead of quitting"/>
@@ -1686,10 +1686,97 @@ button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
             try { $ctx.Response.OutputStream.Write($buf,0,$buf.Length); $ctx.Response.OutputStream.Close() } catch {}
         }
 
-        # ── Auto-update yt-dlp ──
+        function Get-VerifiedReleaseAsset {
+            param([string]$ApiUrl, [string]$Repository, [string]$AssetName)
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+            $headers = @{ Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28'; 'User-Agent'='MediaDL/5.0' }
+            $release = Invoke-RestMethod -Uri $ApiUrl -Headers $headers -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+            $asset = @($release.assets | Where-Object { $_.name -eq $AssetName -and $_.state -eq 'uploaded' }) | Select-Object -First 1
+            if (-not $asset) { throw "Release asset not found: $Repository/$AssetName" }
+            $digest = "$($asset.digest)".Trim().ToLowerInvariant()
+            if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Release asset has no valid SHA-256 digest: $Repository/$AssetName" }
+            try { $downloadUri = [uri]$asset.browser_download_url } catch { throw "Release asset URL is invalid: $Repository/$AssetName" }
+            if ($downloadUri.Scheme -ne 'https' -or $downloadUri.Host -ne 'github.com' -or $downloadUri.AbsolutePath -notmatch ("^/" + [regex]::Escape($Repository) + "/releases/download/")) {
+                throw "Release asset URL is outside the expected GitHub repository: $Repository/$AssetName"
+            }
+            return [pscustomobject]@{ Repository=$Repository; Name=$AssetName; Tag="$($release.tag_name)"; Uri=$downloadUri.AbsoluteUri; Sha256=$digest.Substring(7) }
+        }
+
+        function Invoke-VerifiedDownload {
+            param($Asset, [string]$Destination)
+            $directory = Split-Path -Parent $Destination
+            if (-not $directory -or -not (Test-Path -LiteralPath $directory -PathType Container)) { throw "Update directory not found: $directory" }
+            $temporary = Join-Path $directory (".$([System.IO.Path]::GetFileName($Destination)).mdl_$([guid]::NewGuid().ToString('N')).download")
+            try {
+                Invoke-WebRequest -Uri $Asset.Uri -OutFile $temporary -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent'='MediaDL/5.0' } -ErrorAction Stop
+                $actual = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+                if ($actual -ne $Asset.Sha256) { throw "SHA-256 mismatch for $($Asset.Repository)/$($Asset.Name)" }
+                Move-Item -LiteralPath $temporary -Destination $Destination -Force
+            } finally {
+                if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+            }
+        }
+
+        function Update-VerifiedFfmpeg {
+            param($Asset, [string]$Destination)
+            $directory = Split-Path -Parent $Destination
+            $archivePath = Join-Path $directory (".ffmpeg_$([guid]::NewGuid().ToString('N')).zip")
+            $temporary = Join-Path $directory (".ffmpeg_$([guid]::NewGuid().ToString('N')).exe")
+            $archive = $null
+            try {
+                Invoke-VerifiedDownload -Asset $Asset -Destination $archivePath
+                Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+                $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+                $entry = @($archive.Entries | Where-Object { $_.Name -eq 'ffmpeg.exe' }) | Select-Object -First 1
+                if (-not $entry) { throw 'Verified ffmpeg archive does not contain ffmpeg.exe' }
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $temporary, $true)
+                Move-Item -LiteralPath $temporary -Destination $Destination -Force
+            } finally {
+                if ($archive) { $archive.Dispose() }
+                if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue }
+                if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+            }
+        }
+
+        function Update-MediaDependencies {
+            param([string]$YtDlpPath, [string]$FfmpegPath)
+            $checkStamp = Join-Path $PSScriptRoot '.last_dependency_check'
+            if (Test-Path -LiteralPath $checkStamp) {
+                $lastCheck = (Get-Item -LiteralPath $checkStamp -ErrorAction SilentlyContinue).LastWriteTime
+                if ($lastCheck -and ((Get-Date) - $lastCheck).TotalHours -lt 24) { return }
+            }
+            $statePath = Join-Path $PSScriptRoot '.dependency-update.json'
+            $state = @{}
+            if (Test-Path -LiteralPath $statePath) {
+                try {
+                    $saved = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+                    if ($saved.ytdlp) { $state.ytdlp = $saved.ytdlp }
+                    if ($saved.ffmpeg) { $state.ffmpeg = $saved.ffmpeg }
+                } catch { Write-SLog "Dependency update state ignored: $($_.Exception.Message)" }
+            }
+            try {
+                $asset = Get-VerifiedReleaseAsset 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' 'yt-dlp/yt-dlp' 'yt-dlp.exe'
+                if (-not $YtDlpPath -or -not (Test-Path -LiteralPath $YtDlpPath) -or "$($state.ytdlp.sha256)" -ne $asset.Sha256) {
+                    Invoke-VerifiedDownload -Asset $asset -Destination $YtDlpPath
+                    Write-SLog "yt-dlp updated after SHA-256 verification: $($asset.Tag)"
+                }
+                $state.ytdlp = @{ tag=$asset.Tag; sha256=$asset.Sha256; checkedAt=(Get-Date).ToUniversalTime().ToString('o') }
+            } catch { Write-SLog "yt-dlp verified update skipped: $($_.Exception.Message)" }
+            try {
+                $asset = Get-VerifiedReleaseAsset 'https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases/latest' 'yt-dlp/FFmpeg-Builds' 'ffmpeg-master-latest-win64-gpl.zip'
+                if (-not $FfmpegPath -or -not (Test-Path -LiteralPath $FfmpegPath) -or "$($state.ffmpeg.sha256)" -ne $asset.Sha256) {
+                    Update-VerifiedFfmpeg -Asset $asset -Destination $FfmpegPath
+                    Write-SLog "ffmpeg updated after SHA-256 verification: $($asset.Tag)"
+                }
+                $state.ffmpeg = @{ tag=$asset.Tag; sha256=$asset.Sha256; checkedAt=(Get-Date).ToUniversalTime().ToString('o') }
+            } catch { Write-SLog "ffmpeg verified update skipped: $($_.Exception.Message)" }
+            try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-SLog "Dependency update state save failed: $($_.Exception.Message)" }
+            try { '' | Set-Content -LiteralPath $checkStamp -Encoding UTF8 } catch {}
+        }
+
+        # ── SHA-256-verified yt-dlp and ffmpeg updates ──
         if ($config.AutoUpdateYtDlp -eq $true) {
-            try { Start-Process -FilePath $config.YtDlpPath -ArgumentList "-U" -NoNewWindow -ErrorAction SilentlyContinue } catch {}
-            Write-SLog "yt-dlp auto-update triggered"
+            Update-MediaDependencies -YtDlpPath $config.YtDlpPath -FfmpegPath $config.FfmpegPath
         }
 
         Initialize-QueueDb

@@ -42,7 +42,10 @@ $consolePtr = [Console.Window]::GetConsoleWindow()
 $script:AppName = "MediaDL"
 $script:AppVersion = "4.0.0"
 $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
-$script:YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+$script:YtDlpReleaseApiUrl = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+$script:FfmpegReleaseApiUrl = "https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases/latest"
+$script:YtDlpAssetName = "yt-dlp.exe"
+$script:FfmpegAssetName = "ffmpeg-master-latest-win64-gpl.zip"
 $script:DefaultDownloadPath = "$env:USERPROFILE\Videos\YouTube"
 $script:GitHubRepo = "https://github.com/SysAdminDoc/MediaDL"
 $script:SqliteToolsUrl = "https://www.sqlite.org/2026/sqlite-tools-win-x64-3530400.zip"
@@ -589,7 +592,7 @@ Download-Image -Url $script:IconUrl -OutPath $iconPath | Out-Null
                             <TextBlock Text="Options" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8"/>
                             <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8" Padding="16">
                                 <StackPanel>
-                                    <CheckBox x:Name="chkAutoUpdate" Content="Auto-update yt-dlp before downloads" IsChecked="True" Margin="0,0,0,8"/>
+                                    <CheckBox x:Name="chkAutoUpdate" Content="Auto-update yt-dlp and ffmpeg daily" IsChecked="True" Margin="0,0,0,8"/>
                                     <CheckBox x:Name="chkNotifications" Content="Show toast notifications" IsChecked="True" Margin="0,0,0,8"/>
                                     <CheckBox x:Name="chkDesktopShortcut" Content="Create desktop shortcut" IsChecked="False"/>
                                 </StackPanel>
@@ -797,6 +800,49 @@ function Invoke-DownloadWithUI {
     Remove-Job $job
 }
 
+function Get-VerifiedReleaseAsset {
+    param(
+        [string]$ApiUrl,
+        [string]$Repository,
+        [string]$AssetName
+    )
+    $headers = @{
+        Accept = 'application/vnd.github+json'
+        'X-GitHub-Api-Version' = '2022-11-28'
+        'User-Agent' = 'MediaDL/5.0'
+    }
+    $release = Invoke-RestMethod -Uri $ApiUrl -Headers $headers -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+    $asset = @($release.assets | Where-Object { $_.name -eq $AssetName -and $_.state -eq 'uploaded' }) | Select-Object -First 1
+    if (-not $asset) { throw "Release asset not found: $Repository/$AssetName" }
+    $digest = "$($asset.digest)".Trim().ToLowerInvariant()
+    if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Release asset has no valid SHA-256 digest: $Repository/$AssetName" }
+    try { $downloadUri = [uri]$asset.browser_download_url } catch { throw "Release asset URL is invalid: $Repository/$AssetName" }
+    if ($downloadUri.Scheme -ne 'https' -or $downloadUri.Host -ne 'github.com' -or $downloadUri.AbsolutePath -notmatch ("^/" + [regex]::Escape($Repository) + "/releases/download/")) {
+        throw "Release asset URL is outside the expected GitHub repository: $Repository/$AssetName"
+    }
+    return [pscustomobject]@{
+        Repository = $Repository
+        Name = $AssetName
+        Tag = "$($release.tag_name)"
+        Uri = $downloadUri.AbsoluteUri
+        Sha256 = $digest.Substring(7)
+    }
+}
+
+function Invoke-VerifiedDownloadWithUI {
+    param($Asset, [string]$OutFile)
+    $directory = Split-Path -Parent $OutFile
+    $temporary = Join-Path $directory (".$([System.IO.Path]::GetFileName($OutFile)).mdl_$([guid]::NewGuid().ToString('N')).download")
+    try {
+        Invoke-DownloadWithUI -Uri $Asset.Uri -OutFile $temporary
+        $actual = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        if ($actual -ne $Asset.Sha256) { throw "SHA-256 mismatch for $($Asset.Repository)/$($Asset.Name)" }
+        Move-Item -LiteralPath $temporary -Destination $OutFile -Force
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Update-WizardButtons {
     switch ($script:CurrentStep) {
         1 {
@@ -955,20 +1001,21 @@ $btnNext.Add_Click({
                     # Step 2: Download yt-dlp
                     Update-Status "Downloading yt-dlp..."
                     $ytdlpPath = Join-Path $script:InstallPath "yt-dlp.exe"
-                    Invoke-DownloadWithUI -Uri $script:YtDlpUrl -OutFile $ytdlpPath
-                    Update-Status "  [OK] Downloaded yt-dlp"
+                    $ytdlpAsset = Get-VerifiedReleaseAsset -ApiUrl $script:YtDlpReleaseApiUrl -Repository 'yt-dlp/yt-dlp' -AssetName $script:YtDlpAssetName
+                    Invoke-VerifiedDownloadWithUI -Asset $ytdlpAsset -OutFile $ytdlpPath
+                    Update-Status "  [OK] Downloaded yt-dlp $($ytdlpAsset.Tag) (SHA-256 verified)"
                     Set-Progress 25
                     
                     # Step 3: Download ffmpeg
                     Update-Status "Downloading ffmpeg (this may take a moment)..."
-                    $ffmpegZipUrl = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
                     $ffmpegZip = Join-Path $script:InstallPath "ffmpeg.zip"
                     $ffmpegPath = Join-Path $script:InstallPath "ffmpeg.exe"
                     
                     if (!(Test-Path $ffmpegPath)) {
                         try {
-                            Invoke-DownloadWithUI -Uri $ffmpegZipUrl -OutFile $ffmpegZip
-                            Update-Status "  [OK] Downloaded ffmpeg archive"
+                            $ffmpegAsset = Get-VerifiedReleaseAsset -ApiUrl $script:FfmpegReleaseApiUrl -Repository 'yt-dlp/FFmpeg-Builds' -AssetName $script:FfmpegAssetName
+                            Invoke-VerifiedDownloadWithUI -Asset $ffmpegAsset -OutFile $ffmpegZip
+                            Update-Status "  [OK] Downloaded ffmpeg archive $($ffmpegAsset.Tag) (SHA-256 verified)"
                             Update-Status "  Extracting ffmpeg..."
                             
                             $zip = [System.IO.Compression.ZipFile]::OpenRead($ffmpegZip)
@@ -1483,19 +1530,11 @@ if ($videoId) {
 }
 
 # =========================================================================
-# yt-dlp AUTO-UPDATE (throttled: once per day via timestamp file)
+# VERIFIED DEPENDENCY UPDATES
 # =========================================================================
-if ($config.AutoUpdate) {
-    $updateStamp = Join-Path $PSScriptRoot ".last_update"
-    $shouldUpdate = $true
-    if (Test-Path $updateStamp) {
-        $lastUpdate = (Get-Item $updateStamp -ErrorAction SilentlyContinue).LastWriteTime
-        if ($lastUpdate -and ((Get-Date) - $lastUpdate).TotalHours -lt 24) { $shouldUpdate = $false }
-    }
-    if ($shouldUpdate) {
-        Start-Job -ScriptBlock { param($exe,$stamp) & $exe --update 2>&1 | Out-Null; "" | Set-Content $stamp -Force } -ArgumentList $ytdlpPath, $updateStamp | Out-Null
-    }
-}
+# The background server performs the daily SHA-256-verified update. Keeping
+# update authority there prevents this protocol UI from bypassing the check.
+if ($config.AutoUpdate) { Write-Log "Verified dependency updates are managed by the background server" }
 
 # =========================================================================
 # HELPER: Kill yt-dlp child processes of a job
@@ -1971,12 +2010,97 @@ if (-not $authToken) {
 
 if (!(Test-Path $config.YtDlpPath)) { Write-Log "FATAL: yt-dlp not found at $($config.YtDlpPath)"; exit 1 }
 
-# Auto-update yt-dlp on server start (background, non-blocking)
-if ($config.AutoUpdateYtDlp -eq $true) {
+function Get-VerifiedReleaseAsset {
+    param([string]$ApiUrl, [string]$Repository, [string]$AssetName)
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    $headers = @{ Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28'; 'User-Agent'='MediaDL/5.0' }
+    $release = Invoke-RestMethod -Uri $ApiUrl -Headers $headers -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+    $asset = @($release.assets | Where-Object { $_.name -eq $AssetName -and $_.state -eq 'uploaded' }) | Select-Object -First 1
+    if (-not $asset) { throw "Release asset not found: $Repository/$AssetName" }
+    $digest = "$($asset.digest)".Trim().ToLowerInvariant()
+    if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Release asset has no valid SHA-256 digest: $Repository/$AssetName" }
+    try { $downloadUri = [uri]$asset.browser_download_url } catch { throw "Release asset URL is invalid: $Repository/$AssetName" }
+    if ($downloadUri.Scheme -ne 'https' -or $downloadUri.Host -ne 'github.com' -or $downloadUri.AbsolutePath -notmatch ("^/" + [regex]::Escape($Repository) + "/releases/download/")) {
+        throw "Release asset URL is outside the expected GitHub repository: $Repository/$AssetName"
+    }
+    return [pscustomobject]@{ Repository=$Repository; Name=$AssetName; Tag="$($release.tag_name)"; Uri=$downloadUri.AbsoluteUri; Sha256=$digest.Substring(7) }
+}
+
+function Invoke-VerifiedDownload {
+    param($Asset, [string]$Destination)
+    $directory = Split-Path -Parent $Destination
+    if (-not $directory -or -not (Test-Path -LiteralPath $directory -PathType Container)) { throw "Update directory not found: $directory" }
+    $temporary = Join-Path $directory (".$([System.IO.Path]::GetFileName($Destination)).mdl_$([guid]::NewGuid().ToString('N')).download")
     try {
-        Start-Process -FilePath $config.YtDlpPath -ArgumentList "-U" -NoNewWindow -ErrorAction SilentlyContinue
-        Write-Log "yt-dlp auto-update triggered"
-    } catch {}
+        Invoke-WebRequest -Uri $Asset.Uri -OutFile $temporary -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent'='MediaDL/5.0' } -ErrorAction Stop
+        $actual = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        if ($actual -ne $Asset.Sha256) { throw "SHA-256 mismatch for $($Asset.Repository)/$($Asset.Name)" }
+        Move-Item -LiteralPath $temporary -Destination $Destination -Force
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Update-VerifiedFfmpeg {
+    param($Asset, [string]$Destination)
+    $directory = Split-Path -Parent $Destination
+    $archivePath = Join-Path $directory (".ffmpeg_$([guid]::NewGuid().ToString('N')).zip")
+    $temporary = Join-Path $directory (".ffmpeg_$([guid]::NewGuid().ToString('N')).exe")
+    $archive = $null
+    try {
+        Invoke-VerifiedDownload -Asset $Asset -Destination $archivePath
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+        $entry = @($archive.Entries | Where-Object { $_.Name -eq 'ffmpeg.exe' }) | Select-Object -First 1
+        if (-not $entry) { throw 'Verified ffmpeg archive does not contain ffmpeg.exe' }
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $temporary, $true)
+        Move-Item -LiteralPath $temporary -Destination $Destination -Force
+    } finally {
+        if ($archive) { $archive.Dispose() }
+        if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Update-MediaDependencies {
+    param([string]$YtDlpPath, [string]$FfmpegPath)
+    $checkStamp = Join-Path $PSScriptRoot '.last_dependency_check'
+    if (Test-Path -LiteralPath $checkStamp) {
+        $lastCheck = (Get-Item -LiteralPath $checkStamp -ErrorAction SilentlyContinue).LastWriteTime
+        if ($lastCheck -and ((Get-Date) - $lastCheck).TotalHours -lt 24) { return }
+    }
+    $statePath = Join-Path $PSScriptRoot '.dependency-update.json'
+    $state = @{}
+    if (Test-Path -LiteralPath $statePath) {
+        try {
+            $saved = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            if ($saved.ytdlp) { $state.ytdlp = $saved.ytdlp }
+            if ($saved.ffmpeg) { $state.ffmpeg = $saved.ffmpeg }
+        } catch { Write-Log "Dependency update state ignored: $($_.Exception.Message)" }
+    }
+    try {
+        $asset = Get-VerifiedReleaseAsset 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' 'yt-dlp/yt-dlp' 'yt-dlp.exe'
+        if (-not $YtDlpPath -or -not (Test-Path -LiteralPath $YtDlpPath) -or "$($state.ytdlp.sha256)" -ne $asset.Sha256) {
+            Invoke-VerifiedDownload -Asset $asset -Destination $YtDlpPath
+            Write-Log "yt-dlp updated after SHA-256 verification: $($asset.Tag)"
+        }
+        $state.ytdlp = @{ tag=$asset.Tag; sha256=$asset.Sha256; checkedAt=(Get-Date).ToUniversalTime().ToString('o') }
+    } catch { Write-Log "yt-dlp verified update skipped: $($_.Exception.Message)" }
+    try {
+        $asset = Get-VerifiedReleaseAsset 'https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases/latest' 'yt-dlp/FFmpeg-Builds' 'ffmpeg-master-latest-win64-gpl.zip'
+        if (-not $FfmpegPath -or -not (Test-Path -LiteralPath $FfmpegPath) -or "$($state.ffmpeg.sha256)" -ne $asset.Sha256) {
+            Update-VerifiedFfmpeg -Asset $asset -Destination $FfmpegPath
+            Write-Log "ffmpeg updated after SHA-256 verification: $($asset.Tag)"
+        }
+        $state.ffmpeg = @{ tag=$asset.Tag; sha256=$asset.Sha256; checkedAt=(Get-Date).ToUniversalTime().ToString('o') }
+    } catch { Write-Log "ffmpeg verified update skipped: $($_.Exception.Message)" }
+    try { $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8 } catch { Write-Log "Dependency update state save failed: $($_.Exception.Message)" }
+    try { '' | Set-Content -LiteralPath $checkStamp -Encoding UTF8 } catch {}
+}
+
+# SHA-256-verified yt-dlp and ffmpeg updates, throttled to once per day.
+if ($config.AutoUpdateYtDlp -eq $true) {
+    Update-MediaDependencies -YtDlpPath $config.YtDlpPath -FfmpegPath $config.FfmpegPath
 }
 
 # Download archive file (prevents re-downloading same video)
