@@ -1034,6 +1034,7 @@ $btnNext.Add_Click({
                         }
                         SubtitleSrt = $false
                         HardwareEncoder = 'none'
+                        NamedPipeName = 'MediaDL'
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1940,6 +1941,7 @@ $configDefaults = @{
     EmbedSubs = $false
     SubtitleSrt = $false
     HardwareEncoder = 'none'
+    NamedPipeName = 'MediaDL'
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -2445,6 +2447,185 @@ function Set-DownloadSuspended {
         } catch { $ok = $false }
     }
     return $ok
+}
+
+if (-not ('MediaDL.NamedPipeHost' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.IO.Pipes;
+using System.Text;
+using System.Threading;
+
+namespace MediaDL {
+    public sealed class NamedPipeRequest {
+        public string Line { get; private set; }
+        public string Response { get; set; }
+        public ManualResetEventSlim Completed { get; private set; }
+        public NamedPipeRequest(string line) {
+            Line = line;
+            Completed = new ManualResetEventSlim(false);
+        }
+    }
+
+    public sealed class NamedPipeHost : IDisposable {
+        private readonly string name;
+        private readonly ConcurrentQueue<NamedPipeRequest> queue = new ConcurrentQueue<NamedPipeRequest>();
+        private volatile bool stopping;
+        private Thread worker;
+
+        public NamedPipeHost(string pipeName) { name = pipeName; }
+        public void Start() {
+            worker = new Thread(Run) { IsBackground = true, Name = "MediaDL named pipe" };
+            worker.Start();
+        }
+        public bool TryDequeue(out NamedPipeRequest request) { return queue.TryDequeue(out request); }
+        public void Stop() {
+            stopping = true;
+            try {
+                using (var wake = new NamedPipeClientStream(".", name, PipeDirection.Out)) { wake.Connect(250); }
+            } catch { }
+            if (worker != null && worker.IsAlive) worker.Join(1000);
+        }
+        private void Run() {
+            while (!stopping) {
+                try {
+                    using (var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous)) {
+                        pipe.WaitForConnection();
+                        if (stopping) break;
+                        using (var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, true))
+                        using (var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true }) {
+                            var line = reader.ReadLine();
+                            if (line == null) continue;
+                            var request = new NamedPipeRequest(line);
+                            queue.Enqueue(request);
+                            request.Completed.Wait(30000);
+                            writer.WriteLine(request.Response ?? "{\"status\":503,\"body\":{\"error\":\"pipe request timeout\"}}");
+                        }
+                    }
+                } catch {
+                    if (!stopping) Thread.Sleep(100);
+                }
+            }
+        }
+        public void Dispose() { Stop(); }
+    }
+}
+"@
+}
+
+function Convert-PipeResult {
+    param($Body, [int]$Status = 200)
+    return (@{ status = $Status; body = $Body } | ConvertTo-Json -Depth 7 -Compress)
+}
+
+function Get-PipeHeader {
+    param($Headers, [string]$Name)
+    if (-not $Headers) { return $null }
+    $property = @($Headers.PSObject.Properties | Where-Object { $_.Name -ieq $Name } | Select-Object -First 1)
+    if ($property) { return "$($property.Value)" }
+    return $null
+}
+
+function Invoke-PipeRequest {
+    param([string]$Line)
+    try { $pipeRequest = $Line | ConvertFrom-Json } catch { return (Convert-PipeResult @{ error = 'Invalid JSON request' } 400) }
+    $method = ("$($pipeRequest.method)").ToUpperInvariant()
+    $path = ("$($pipeRequest.path)" -split '\?')[0].TrimEnd('/')
+    if (-not $path) { $path = '/' }
+    if ($method -eq 'OPTIONS') { return (Convert-PipeResult @{ ok = $true }) }
+    if ($path -notin @('/health','/ui') -and (Get-PipeHeader $pipeRequest.headers 'X-Auth-Token') -ne $authToken) {
+        return (Convert-PipeResult @{ error = 'Unauthorized' } 401)
+    }
+    switch -Regex ($path) {
+        '^/health$' {
+            $active = @($downloads.Values | Where-Object { $_.status -match 'downloading|merging|extracting' }).Count
+            $body = @{ status = 'ok'; version = $SERVER_VERSION; port = $PORT; pipe = $config.NamedPipeName; downloads = $active; token_required = $true }
+            if ((Get-PipeHeader $pipeRequest.headers 'X-MDL-Client') -eq 'MediaDL') { $body.token = $authToken }
+            return (Convert-PipeResult $body)
+        }
+        '^/download$' {
+            if ($method -ne 'POST') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
+            $params = $pipeRequest.body
+            if ($params -is [string]) { try { $params = $params | ConvertFrom-Json } catch { return (Convert-PipeResult @{ error = 'Invalid body' } 400) } }
+            if (-not $params -or -not $params.url) { return (Convert-PipeResult @{ error = 'Missing url' } 400) }
+            $identity = Get-DownloadIdentity -Url $params.url -SourceUrl $params.sourceUrl -VideoId $params.videoId -ChannelId $params.channelId -Site $params.site -AudioOnly ($params.audioOnly -eq $true)
+            $duplicate = Find-QueueDuplicate $identity.key
+            if ($duplicate) { return (Convert-PipeResult @{ error = 'Duplicate download'; duplicateId = $duplicate.id; contentKey = $identity.key; title = $duplicate.title } 409) }
+            $active = @($downloads.Values | Where-Object { $_.status -match 'downloading|merging|extracting' }).Count
+            if ($active -ge $MAX_CONCURRENT) { return (Convert-PipeResult @{ error = 'Too many concurrent downloads'; active = $active } 429) }
+            $site = Get-SiteKey $params.url
+            $siteActive = Get-ActiveSiteCount $site
+            if ($siteActive -ge $SITE_CONCURRENCY_CAP) { return (Convert-PipeResult @{ error = 'Per-site concurrency limit reached'; site = $site; active = $siteActive; limit = $SITE_CONCURRENCY_CAP } 429) }
+            $id = Start-Download $params
+            return (Convert-PipeResult @{ id = $id; status = 'downloading' })
+        }
+        '^/status/(.+)$' {
+            $id = $matches[1]; Update-Downloads
+            if (-not $downloads.ContainsKey($id)) { return (Convert-PipeResult @{ error = 'Not found' } 404) }
+            $dl = $downloads[$id]
+            return (Convert-PipeResult @{ id = $dl.id; status = $dl.status; progress = [math]::Round($dl.progress,1); speed = $dl.speed; eta = $dl.eta; title = $dl.title; filename = $dl.filename })
+        }
+        '^/queue$' {
+            $list = @(); foreach ($dl in @($downloads.Values | Sort-Object priority,startTime)) { $list += @{ id=$dl.id; status=$dl.status; progress=[math]::Round($dl.progress,1); title=$dl.title; speed=$dl.speed; eta=$dl.eta; priority=[int]$dl.priority; site=(Get-SiteKey $dl.url); videoId=$dl.videoId; channelId=$dl.channelId } }
+            return (Convert-PipeResult @{ downloads = $list; count = $list.Count })
+        }
+        '^/pause/(.+)$' {
+            if ($method -ne 'POST') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
+            $id = $matches[1]; if (-not $downloads.ContainsKey($id)) { return (Convert-PipeResult @{ error = 'Not found' } 404) }
+            $dl = $downloads[$id]
+            if ($dl.status -eq 'paused') { return (Convert-PipeResult @{ id=$id; status='paused' }) }
+            if ($dl.status -match 'complete|failed|cancelled' -or -not $dl.process) { return (Convert-PipeResult @{ error='Download cannot be paused'; status=$dl.status } 409) }
+            if (Set-DownloadSuspended $dl $true) { $dl.status='paused'; Save-QueueRecord $dl; return (Convert-PipeResult @{ id=$id; status='paused' }) }
+            return (Convert-PipeResult @{ error='Could not suspend download' } 500)
+        }
+        '^/resume/(.+)$' {
+            if ($method -ne 'POST') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
+            $id = $matches[1]; if (-not $downloads.ContainsKey($id)) { return (Convert-PipeResult @{ error = 'Not found' } 404) }
+            $dl = $downloads[$id]
+            if ($dl.status -ne 'paused') { return (Convert-PipeResult @{ id=$id; status=$dl.status }) }
+            if (Set-DownloadSuspended $dl $false) { $dl.status='downloading'; Save-QueueRecord $dl; return (Convert-PipeResult @{ id=$id; status='downloading' }) }
+            return (Convert-PipeResult @{ error='Could not resume download' } 500)
+        }
+        '^/cancel/(.+)$' {
+            if ($method -ne 'DELETE') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
+            $id = $matches[1]; if (-not $downloads.ContainsKey($id)) { return (Convert-PipeResult @{ error = 'Not found' } 404) }
+            $dl = $downloads[$id]; if ($dl.process -and -not $dl.process.HasExited) { try { $dl.process.Kill() } catch {} }; $dl.status='cancelled'; Save-QueueRecord $dl
+            return (Convert-PipeResult @{ id=$id; cancelled=$true })
+        }
+        '^/shutdown$' {
+            if ($method -ne 'POST') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
+            $listener.Stop()
+            return (Convert-PipeResult @{ status = 'shutting_down' })
+        }
+        default { return (Convert-PipeResult @{ error = 'Not found'; path = $path } 404) }
+    }
+}
+
+function Start-PipeRequestPump {
+    param([string]$Name)
+    try {
+        $script:NamedPipeHost = [MediaDL.NamedPipeHost]::new($Name)
+        $script:NamedPipeHost.Start()
+        Write-Log "Named pipe listening on $Name"
+        return $true
+    } catch {
+        Write-Log "Named pipe unavailable: $($_.Exception.Message)"
+        $script:NamedPipeHost = $null
+        return $false
+    }
+}
+
+function Process-PipeRequests {
+    if (-not $script:NamedPipeHost) { return }
+    while ($true) {
+        $request = $null
+        if (-not $script:NamedPipeHost.TryDequeue([ref]$request)) { break }
+        try { $request.Response = Invoke-PipeRequest $request.Line }
+        catch { $request.Response = Convert-PipeResult @{ error = 'Pipe request failed'; detail = "$($_.Exception.Message)" } 500 }
+        [void]$request.Completed.Set()
+    }
 }
 
 function New-JsonResponse {
@@ -2992,14 +3173,17 @@ try { $listener.Start() }
 catch { Write-Log "FATAL: Cannot start listener on port $PORT - $_"; exit 1 }
 
 Write-Log "Server listening on http://127.0.0.1:$PORT"
+Start-PipeRequestPump (if ($config.NamedPipeName -and "$($config.NamedPipeName)" -match '^[A-Za-z0-9._-]{1,64}$') { "$($config.NamedPipeName)" } else { 'MediaDL' }) | Out-Null
 
 $lastCleanup = Get-Date
 
 while ($listener.IsListening) {
     try {
+        Process-PipeRequests
         $result = $listener.BeginGetContext($null, $null)
         while (-not $result.AsyncWaitHandle.WaitOne(500)) {
             Update-Downloads
+            Process-PipeRequests
             if ((Get-Date) -gt $lastCleanup.AddMinutes(1)) {
                 Clean-OldDownloads
                 $lastCleanup = Get-Date
@@ -3092,6 +3276,7 @@ while ($listener.IsListening) {
                         postProcessMusicBrainz = $config.PostProcessMusicBrainz
                         sitePresets = $config.SitePresets
                         hardwareEncoder = $config.HardwareEncoder
+                        namedPipeName = $config.NamedPipeName
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
@@ -3289,6 +3474,7 @@ while ($listener.IsListening) {
     }
 }
 
+if ($script:NamedPipeHost) { $script:NamedPipeHost.Stop(); $script:NamedPipeHost = $null }
 foreach ($dl in $downloads.Values) {
     if ($dl.process -and -not $dl.process.HasExited) {
         $dl.status = "interrupted"

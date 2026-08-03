@@ -280,6 +280,8 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 
 <sub>🔐 = Requires <code>X-Auth-Token</code> header (auto-negotiated by the userscript)</sub>
 
+The same local control surface is available on the `\\.\pipe\MediaDL` named pipe to avoid TCP port collisions. Send one newline-delimited JSON request such as `{"method":"GET","path":"/health","headers":{"X-MDL-Client":"MediaDL"}}`; the response is `{"status":200,"body":...}`. Pipe requests support health, download, status, queue, pause, resume, cancel, and shutdown operations and use the same auth token.
+
 </details>
 
 <br>
