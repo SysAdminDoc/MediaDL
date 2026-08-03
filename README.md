@@ -12,7 +12,7 @@
 <br><br>
 
 <!-- BADGES -->
-[![Version](https://img.shields.io/badge/v4.0.0-00b894?style=for-the-badge&logo=semanticrelease&logoColor=white&label=Version)](https://github.com/SysAdminDoc/MediaDL/releases)
+[![Version](https://img.shields.io/badge/v5.0.0-00b894?style=for-the-badge&logo=semanticrelease&logoColor=white&label=Version)](https://github.com/SysAdminDoc/MediaDL/releases)
 &nbsp;
 [![Sites](https://img.shields.io/badge/1800+-e17055?style=for-the-badge&logo=youtube&logoColor=white&label=Sites)](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 &nbsp;

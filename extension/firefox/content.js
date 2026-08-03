@@ -92,7 +92,7 @@
     // CONFIGURATION
     // =========================================================================
     const CONFIG = {
-        version: '4.0.0',
+        version: '5.0.0',
         debounceMs: 300,
         scanIntervalMs: 2000,
         positionIntervalMs: 200,

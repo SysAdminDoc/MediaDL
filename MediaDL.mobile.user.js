@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MediaDL Mobile - Direct Media Downloader
 // @namespace    https://github.com/SysAdminDoc/MediaDL
-// @version      4.0.0
+// @version      5.0.0
 // @description  Lightweight direct-media downloader for Kiwi Browser and Orion.
 // @author       SysAdminDoc
 // @license      MIT
