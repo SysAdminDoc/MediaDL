@@ -702,6 +702,7 @@ CREATE TABLE IF NOT EXISTS downloads (
     speed TEXT,
     eta TEXT,
     filename TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
     split_chapters INTEGER NOT NULL DEFAULT 0,
     record_from_now INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -709,6 +710,10 @@ CREATE TABLE IF NOT EXISTS downloads (
 );
 CREATE INDEX IF NOT EXISTS idx_downloads_status_created ON downloads(status, created_at);
 "@
+            $columns = Invoke-QueueSql "PRAGMA table_info(downloads);" -Json
+            if ($columns -and $columns -notmatch '"name":"priority"') {
+                Invoke-QueueSql "ALTER TABLE downloads ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;"
+            }
         }
 
         function Save-QueueRecord {
@@ -718,7 +723,7 @@ CREATE INDEX IF NOT EXISTS idx_downloads_status_created ON downloads(status, cre
             $created = if ($Download.startTime) { ([datetime]$Download.startTime).ToUniversalTime().ToString('o') } else { $now }
             $sql = @"
 INSERT OR REPLACE INTO downloads
- (id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,split_chapters,record_from_now,created_at,updated_at)
+ (id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,priority,split_chapters,record_from_now,created_at,updated_at)
 VALUES (
  $(ConvertTo-SqliteLiteral $Download.id),
  $(ConvertTo-SqliteLiteral $Download.url),
@@ -733,6 +738,7 @@ VALUES (
  $(ConvertTo-SqliteLiteral $Download.speed),
  $(ConvertTo-SqliteLiteral $Download.eta),
  $(ConvertTo-SqliteLiteral $Download.filename),
+ $([int]$Download.priority),
  $(if ($Download.splitChapters) { 1 } else { 0 }),
  $(if ($Download.recordFromNow) { 1 } else { 0 }),
  $(ConvertTo-SqliteLiteral $created),
@@ -744,7 +750,7 @@ VALUES (
 
         function Restore-QueueEntries {
             if (-not $sqlitePath) { return }
-            $json = Invoke-QueueSql "SELECT id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,split_chapters,record_from_now,created_at FROM downloads WHERE status NOT IN ('complete','failed','cancelled') ORDER BY created_at;" -Json
+            $json = Invoke-QueueSql "SELECT id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,priority,split_chapters,record_from_now,created_at FROM downloads WHERE status NOT IN ('complete','failed','cancelled') ORDER BY priority,created_at;" -Json
             if (-not $json) { return }
             try { $rows = @($json | ConvertFrom-Json) } catch { return }
             foreach ($row in $rows) {
@@ -755,7 +761,7 @@ VALUES (
                     audioOnly=([int]$row.audio_only -eq 1); status="interrupted"
                     progress=[double]$row.progress; speed="$($row.speed)"; eta="$($row.eta)"
                     process=$null; progressFile=""; startTime=$start; filename="$($row.filename)"
-                    format="$($row.format)"; quality="$($row.quality)"
+                    format="$($row.format)"; quality="$($row.quality)"; priority=[int]$row.priority
                     splitChapters=([int]$row.split_chapters -eq 1); recordFromNow=([int]$row.record_from_now -eq 1)
                     referer="$($row.referer)"; outputDir="$($row.output_dir)"
                 })
@@ -773,6 +779,14 @@ VALUES (
             @($state.Downloads.Values | Where-Object {
                 $_.status -match 'downloading|merging|extracting' -and (Get-SiteKey $_.url) -eq $Site
             }).Count
+        }
+
+        function Get-NextQueuePriority {
+            $priorities = @($state.Downloads.Values | ForEach-Object {
+                try { [int]$_.priority } catch { 0 }
+            })
+            if ($priorities.Count -eq 0) { return 0 }
+            return ([int](($priorities | Measure-Object -Maximum).Maximum) + 1)
         }
 
         function Get-DownloadProcessIds {
@@ -918,7 +932,7 @@ VALUES (
                 id=$id; url=$url; title=if($title){$title}else{"Unknown"}; audioOnly=$audioOnly
                 status="downloading"; progress=0; speed=""; eta=""; process=$proc
                 progressFile=$progressFile; startTime=(Get-Date); filename=""; format=$format; quality=$quality
-                splitChapters=$splitChapters; recordFromNow=$recordFromNow; referer=$referer; outputDir=$outDir
+                splitChapters=$splitChapters; recordFromNow=$recordFromNow; priority=(Get-NextQueuePriority); referer=$referer; outputDir=$outDir
             })
             Save-QueueRecord $state.Downloads[$id]
             Write-SLog "[$id] Started: $($url.Substring(0,[Math]::Min(60,$url.Length)))... recordFromNow=$recordFromNow"
@@ -997,6 +1011,186 @@ VALUES (
             try { $r = New-Object System.IO.StreamReader($req.InputStream,$req.ContentEncoding); $b = $r.ReadToEnd(); $r.Close(); return $b } catch { return $null }
         }
 
+        function Send-QueueUi { param($ctx)
+            $html = @"
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MediaDL Queue</title>
+<style>
+:root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; background: #10131a; color: #f4f7fb; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #263451 0, #10131a 42rem); }
+main { width: min(960px, 100%); margin: 0 auto; padding: 28px 18px 56px; }
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 26px; }
+.eyebrow { color: #7dd3fc; font-size: 12px; font-weight: 700; letter-spacing: .16em; margin: 0 0 8px; }
+h1 { font-size: clamp(28px, 5vw, 46px); line-height: 1; margin: 0 0 10px; letter-spacing: -.04em; }
+#updated { color: #9aa8bd; font-size: 13px; }
+button { border: 1px solid #35445e; border-radius: 9px; background: #182235; color: #f4f7fb; cursor: pointer; font: inherit; padding: 9px 13px; }
+button:hover { background: #23324d; border-color: #5c7bab; }
+button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+.notice { border: 1px solid #263754; border-radius: 12px; color: #aebbd0; padding: 13px 15px; margin-bottom: 14px; }
+.notice.error { border-color: #7f1d1d; color: #fecaca; }
+#queue-list { display: grid; gap: 11px; list-style: none; padding: 0; margin: 0; }
+.queue-item { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 13px; border: 1px solid #2b3952; border-radius: 14px; padding: 14px; background: rgba(20, 28, 43, .88); box-shadow: 0 10px 26px rgba(0, 0, 0, .16); transition: border-color .15s, transform .15s, opacity .15s; }
+.queue-item:hover { border-color: #526b96; }
+.queue-item.dragging { opacity: .46; transform: scale(.99); }
+.handle { color: #7790b7; cursor: grab; font-size: 23px; line-height: 1; text-align: center; user-select: none; }
+.handle:active { cursor: grabbing; }
+.title { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta { color: #91a0b8; font-size: 12px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress { background: #0b1018; border-radius: 999px; height: 6px; margin-top: 11px; overflow: hidden; }
+.progress > span { background: linear-gradient(90deg, #38bdf8, #818cf8); border-radius: inherit; display: block; height: 100%; min-width: 2px; }
+.actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.actions button { font-size: 12px; padding: 7px 9px; }
+.status { color: #86efac; font-size: 12px; text-transform: capitalize; white-space: nowrap; }
+.status.paused { color: #fcd34d; }
+.status.failed, .status.cancelled { color: #fca5a5; }
+.empty { border: 1px dashed #40516e; border-radius: 14px; color: #9aa8bd; padding: 34px 18px; text-align: center; }
+@media (max-width: 680px) {
+  main { padding: 22px 12px 40px; }
+  header { align-items: stretch; flex-direction: column; }
+  header button { align-self: flex-start; }
+  .queue-item { grid-template-columns: 28px 1fr; }
+  .actions { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div><p class="eyebrow">MEDIADL / LOCAL SERVER</p><h1>Download queue</h1><span id="updated">Connecting...</span></div>
+<button id="refresh" type="button">Refresh</button>
+</header>
+<div id="notice" class="notice">Loading queue...</div>
+<ul id="queue-list" aria-live="polite"></ul>
+</main>
+<script>
+(function () {
+  var token = '';
+  var draggingId = '';
+  var list = document.getElementById('queue-list');
+  var notice = document.getElementById('notice');
+  var updated = document.getElementById('updated');
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>\"]/g, function (character) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[character];
+    });
+  }
+
+  function setNotice(message, isError) {
+    notice.textContent = message;
+    notice.className = isError ? 'notice error' : 'notice';
+  }
+
+  function headers() { return { 'X-Auth-Token': token }; }
+
+  function render(items) {
+    if (!items.length) {
+      list.innerHTML = '<li class="empty">No downloads in the queue.</li>';
+      return;
+    }
+    list.innerHTML = items.map(function (item) {
+      var progress = Math.max(0, Math.min(100, Number(item.progress) || 0));
+      var status = String(item.status || 'unknown');
+      var site = item.site || 'unknown host';
+      var action = '';
+      if (status === 'paused') action += '<button type="button" data-action="resume" data-id="' + escapeHtml(item.id) + '">Resume</button>';
+      else if (/^(downloading|merging|extracting)$/.test(status)) action += '<button type="button" data-action="pause" data-id="' + escapeHtml(item.id) + '">Pause</button>';
+      if (!/^(complete|failed|cancelled)$/.test(status)) action += '<button type="button" data-action="cancel" data-id="' + escapeHtml(item.id) + '">Cancel</button>';
+      return '<li class="queue-item" draggable="true" data-id="' + escapeHtml(item.id) + '">' +
+        '<div class="handle" title="Drag to reorder" aria-label="Drag to reorder">&#8942;</div>' +
+        '<div><div class="title" title="' + escapeHtml(item.title || item.url) + '">' + escapeHtml(item.title || item.url) + '</div>' +
+        '<div class="meta">' + escapeHtml(site) + ' / ' + escapeHtml(status) + ' / ' + progress.toFixed(1) + '%</div>' +
+        '<div class="progress"><span style="width:' + progress + '%"></span></div></div>' +
+        '<div class="actions"><span class="status ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' + action + '</div></li>';
+    }).join('');
+  }
+
+  function loadQueue() {
+    if (draggingId) return;
+    fetch('/health', { headers: { 'X-MDL-Client': 'MediaDL' } })
+      .then(function (response) { if (!response.ok) throw new Error('Health check failed'); return response.json(); })
+      .then(function (health) {
+        token = health.token || '';
+        return fetch('/queue', { headers: headers() });
+      })
+      .then(function (response) { if (!response.ok) throw new Error('Queue request failed'); return response.json(); })
+      .then(function (payload) {
+        var items = Array.isArray(payload.downloads) ? payload.downloads : [];
+        render(items);
+        updated.textContent = items.length + ' item' + (items.length === 1 ? '' : 's') + ' / updated ' + new Date().toLocaleTimeString();
+        setNotice('Drag the handle on an item to change its priority.');
+      })
+      .catch(function (error) { setNotice(error.message + '. Is the MediaDL server running?', true); });
+  }
+
+  function persistOrder() {
+    var ids = Array.prototype.map.call(list.querySelectorAll('.queue-item'), function (item) { return item.getAttribute('data-id'); });
+    fetch('/queue/reorder', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers()), body: JSON.stringify({ ids: ids }) })
+      .then(function (response) { if (!response.ok) throw new Error('Could not save queue order'); return response.json(); })
+      .then(function () { setNotice('Queue order saved.'); loadQueue(); })
+      .catch(function (error) { setNotice(error.message, true); loadQueue(); });
+  }
+
+  function runAction(action, id) {
+    var method = action === 'cancel' ? 'DELETE' : 'POST';
+    var endpoint = '/' + action + '/' + encodeURIComponent(id);
+    fetch(endpoint, { method: method, headers: headers() })
+      .then(function (response) { if (!response.ok) throw new Error('Action failed'); return response.json(); })
+      .then(loadQueue)
+      .catch(function (error) { setNotice(error.message, true); });
+  }
+
+  list.addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-action]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    runAction(button.getAttribute('data-action'), button.getAttribute('data-id'));
+  });
+  list.addEventListener('dragstart', function (event) {
+    var item = event.target.closest('.queue-item');
+    if (!item) return;
+    draggingId = item.getAttribute('data-id');
+    item.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', draggingId);
+  });
+  list.addEventListener('dragover', function (event) {
+    event.preventDefault();
+    var target = event.target.closest('.queue-item');
+    var dragging = list.querySelector('.queue-item.dragging');
+    if (!target || !dragging || target === dragging) return;
+    var after = event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+    list.insertBefore(dragging, after ? target.nextSibling : target);
+  });
+  list.addEventListener('drop', function (event) { event.preventDefault(); if (draggingId) persistOrder(); });
+  list.addEventListener('dragend', function () {
+    var dragging = list.querySelector('.queue-item.dragging');
+    if (dragging) dragging.classList.remove('dragging');
+    draggingId = '';
+  });
+  document.getElementById('refresh').addEventListener('click', loadQueue);
+  loadQueue();
+  window.setInterval(loadQueue, 3000);
+}());
+</script>
+</body>
+</html>
+"@
+            $buf = [System.Text.Encoding]::UTF8.GetBytes($html)
+            $ctx.Response.StatusCode = 200
+            $ctx.Response.ContentType = "text/html; charset=utf-8"
+            $ctx.Response.Headers.Add("Cache-Control", "no-store")
+            $ctx.Response.Headers.Add("X-Content-Type-Options", "nosniff")
+            $ctx.Response.ContentLength64 = $buf.Length
+            try { $ctx.Response.OutputStream.Write($buf,0,$buf.Length); $ctx.Response.OutputStream.Close() } catch {}
+        }
+
         # ── Auto-update yt-dlp ──
         if ($config.AutoUpdateYtDlp -eq $true) {
             try { Start-Process -FilePath $config.YtDlpPath -ArgumentList "-U" -NoNewWindow -ErrorAction SilentlyContinue } catch {}
@@ -1027,11 +1221,12 @@ VALUES (
                 $path = $ctx.Request.Url.AbsolutePath.TrimEnd('/')
 
                 if ($method -eq 'OPTIONS') { Send-Json $ctx @{ok=$true}; continue }
-                if ($path -ne '/health') {
+                if ($path -ne '/health' -and $path -ne '/ui') {
                     if ($ctx.Request.Headers["X-Auth-Token"] -ne $state.Token) { Send-Json $ctx @{error="Unauthorized"} 401; continue }
                 }
 
                 switch -Regex ($path) {
+                    '^/ui$' { Send-QueueUi $ctx }
                     '^/health$' {
                         $active = @($state.Downloads.Values | Where-Object { $_.status -match 'downloading|merging|extracting' }).Count
                         $resp = @{status="ok";version="5.0.0";port=$PORT;downloads=$active;token_required=$true}
@@ -1062,8 +1257,34 @@ VALUES (
                             Send-Json $ctx @{id=$dl.id;status=$dl.status;progress=[math]::Round($dl.progress,1);speed=$dl.speed;eta=$dl.eta;title=$dl.title;filename=$dl.filename}
                         } else { Send-Json $ctx @{error="Not found"} 404 }
                     }
+                    '^/queue/reorder$' {
+                        if ($method -ne 'POST') { Send-Json $ctx @{error="Method not allowed"} 405; break }
+                        $body = Read-Body $ctx.Request
+                        if (-not $body) { Send-Json $ctx @{error="Empty body"} 400; break }
+                        try { $payload = $body | ConvertFrom-Json } catch { Send-Json $ctx @{error="Invalid JSON"} 400; break }
+                        if (-not ($payload.PSObject.Properties.Name -contains 'ids')) { Send-Json $ctx @{error="Missing ids"} 400; break }
+                        $orderedIds = [System.Collections.Generic.List[string]]::new()
+                        $seen = @{}
+                        foreach ($queueId in @($payload.ids)) {
+                            $key = "$queueId"
+                            if ($key -and $state.Downloads.ContainsKey($key) -and -not $seen.ContainsKey($key)) {
+                                $seen[$key] = $true
+                                $orderedIds.Add($key)
+                            }
+                        }
+                        foreach ($dl in @($state.Downloads.Values | Sort-Object priority,startTime)) {
+                            $key = "$($dl.id)"
+                            if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; $orderedIds.Add($key) }
+                        }
+                        for ($i = 0; $i -lt $orderedIds.Count; $i++) {
+                            $dl = $state.Downloads[$orderedIds[$i]]
+                            $dl.priority = $i
+                            Save-QueueRecord $dl
+                        }
+                        Send-Json $ctx @{updated=$true;count=$orderedIds.Count}
+                    }
                     '^/queue$' {
-                        $list = @(); foreach ($dl in $state.Downloads.Values) { $list += @{id=$dl.id;status=$dl.status;progress=[math]::Round($dl.progress,1);title=$dl.title;speed=$dl.speed;eta=$dl.eta} }
+                        $list = @(); foreach ($dl in @($state.Downloads.Values | Sort-Object priority,startTime)) { $list += @{id=$dl.id;status=$dl.status;progress=[math]::Round($dl.progress,1);title=$dl.title;speed=$dl.speed;eta=$dl.eta;priority=[int]$dl.priority;site=(Get-SiteKey $dl.url)} }
                         Send-Json $ctx @{downloads=$list;count=$list.Count}
                     }
                     '^/history$' {

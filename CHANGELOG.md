@@ -14,6 +14,8 @@ All notable changes to MediaDL will be documented in this file.
 - Added: SQLite WAL queue journal with interrupted-item restoration across server restarts.
 - Added: Bandwidth throttle slider and per-site concurrency enforcement for active downloads.
 - Added: Authenticated pause/resume endpoints that suspend and resume yt-dlp process trees.
+- Added: Local `/ui` queue viewer with drag-handle priority reordering and download controls.
+- Added: Priority persistence and migration in the SQLite queue journal.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

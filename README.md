@@ -106,6 +106,7 @@ Lightweight HTTP server on `127.0.0.1:9751`. Concurrent downloads, progress trac
 
 Queue requests and interrupted states persist in a SQLite WAL journal at `%LOCALAPPDATA%\MediaDL\queue.db`.
 The settings panel also exposes a bandwidth slider and per-site concurrency cap to keep busy hosts fair.
+Open `http://127.0.0.1:9751/ui` for the local queue viewer, where drag handles persist priority order and active downloads can be paused, resumed, or cancelled.
 
 #### 🔑 Zero-Config Auth
 Server token negotiated automatically via `X-MDL-Client` header handshake. No manual setup.
@@ -248,9 +249,11 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 | Method | Endpoint | Auth | Response |
 |:--|:--|:--:|:--|
 | `GET` | `/health` | — | Server status. Returns auth token when `X-MDL-Client: MediaDL` header is present |
+| `GET` | `/ui` | — | Local queue viewer with drag handles and download controls |
 | `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer}`. Returns `{id}` |
 | `GET` | `/status/:id` | 🔐 | `{status, progress, speed, eta, filename}` |
-| `GET` | `/queue` | 🔐 | Array of all active downloads with status |
+| `GET` | `/queue` | 🔐 | Priority-ordered array of downloads with status and site |
+| `POST` | `/queue/reorder` | 🔐 | Persist priority order. Body: `{ids: [...]}` |
 | `POST` | `/pause/:id` | 🔐 | Suspend a download process tree |
 | `POST` | `/resume/:id` | 🔐 | Resume a paused download |
 | `DELETE` | `/cancel/:id` | 🔐 | Cancel and clean up a download |
