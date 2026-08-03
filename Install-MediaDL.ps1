@@ -1058,6 +1058,9 @@ $videoUrl = [System.Uri]::UnescapeDataString(($url -replace '^ytdl://', ''))
 $audioOnly = $videoUrl -match "yt(?:yt|kit)_audio_only=1"
 $videoUrl = $videoUrl -replace "[&?]yt(?:yt|kit)_audio_only=1", ""
 
+$recordFromNow = $videoUrl -match "yt(?:yt|kit)_record_from_now=1"
+$videoUrl = $videoUrl -replace "[&?]yt(?:yt|kit)_record_from_now=1", ""
+
 $referer = $null
 if ($videoUrl -match "mdl_referer=([^&]+)") {
     $referer = [System.Uri]::UnescapeDataString($matches[1])
@@ -1073,10 +1076,10 @@ if ($videoUrl -match "mdl_title=([^&]+)") {
 }
 
 $videoUrl = $videoUrl -replace "[?&]$", ""
-$isDirect = $videoUrl -match "fbcdn\.net|\.mp4\?|\.webm\?"
+$isDirect = $videoUrl -match "fbcdn\.net|\.mp4\?|\.webm\?|\.m3u8(?:\?|$)"
 
 Write-Log "URL: $videoUrl"
-Write-Log "Audio: $audioOnly | Direct: $isDirect | Referer: $referer | Title: $pageTitle"
+Write-Log "Audio: $audioOnly | RecordFromNow: $recordFromNow | Direct: $isDirect | Referer: $referer | Title: $pageTitle"
 
 # =========================================================================
 # DUPLICATE PREVENTION (URL hash lock)
@@ -1445,7 +1448,7 @@ $timer.Add_Tick({
         if ($audioOnly) {
             $outTpl = if ($isDirect -and $pageTitle) { Join-Path $config.DownloadPath "$pageTitle.mp3" }
                       else { Join-Path $config.DownloadPath "%(title)s.mp3" }
-            $lblStatus.Text = "Downloading audio..."
+            $lblStatus.Text = if ($recordFromNow) { "Recording live audio..." } else { "Downloading audio..." }
 
             if ($isDirect) {
                 $tmp = Join-Path $config.DownloadPath "mediadl_temp_$([guid]::NewGuid().ToString('N')).mp4"
@@ -1476,7 +1479,7 @@ $timer.Add_Tick({
         } else {
             $outTpl = if ($isDirect -and $pageTitle) { Join-Path $config.DownloadPath "$pageTitle.%(ext)s" }
                       else { Join-Path $config.DownloadPath "%(title)s.%(ext)s" }
-            $lblStatus.Text = "Downloading..."
+            $lblStatus.Text = if ($recordFromNow) { "Recording live stream..." } else { "Downloading..." }
             $script:job = Start-Job -ScriptBlock {
                 param($exe,$ff,$out,$vUrl,$pf,$ref,$direct)
                 $a = if ($direct) { @('--newline','--progress','--ffmpeg-location',$ff,'-o',$out) }
@@ -1846,11 +1849,12 @@ function Start-Download {
     $title = $params.title
     $audioOnly = $params.audioOnly -eq $true
     $referer = $params.referer
+    $recordFromNow = $params.recordFromNow -eq $true
     $splitChapters = $config.SplitChapters -eq $true
     if ($params.PSObject.Properties.Name -contains 'splitChapters') {
         $splitChapters = [bool]$params.splitChapters
     }
-    $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?"
+    $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?|\.m3u8(?:\?|$)"
 
     # Format and quality from client (with safe defaults)
     $allowedVideoFmt = @('mp4','mkv','webm')
@@ -1905,7 +1909,7 @@ function Start-Download {
         $fmtSel = "bestvideo[height<=$quality]+bestaudio/best[height<=$quality]/best"
     }
 
-    Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly format=$format quality=$quality dir=$outDir"
+    Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly recordFromNow=$recordFromNow format=$format quality=$quality dir=$outDir"
 
     # ── Common args shared by all download types ──
     $commonArgs = @('--newline', '--progress', '--no-colors', '--ffmpeg-location', $ffLoc, '-o', $outTpl)
@@ -2014,7 +2018,8 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
         id = $id; url = $url; title = if ($title) { $title } else { "Unknown" }
         audioOnly = $audioOnly; status = "downloading"; progress = 0
         speed = ""; eta = ""; process = $proc; progressFile = $progressFile
-        startTime = (Get-Date); filename = ""; format = $format; quality = $quality; splitChapters = $splitChapters
+        startTime = (Get-Date); filename = ""; format = $format; quality = $quality
+        splitChapters = $splitChapters; recordFromNow = $recordFromNow
     }
 
     return $id
@@ -2192,6 +2197,7 @@ while ($listener.IsListening) {
                     audioOnly = $params.audioOnly; referer = $params.referer
                     format = $params.format; quality = $params.quality
                     outputDir = $params.outputDir; splitChapters = $params.splitChapters
+                    recordFromNow = $params.recordFromNow
                 }
                 $id = Start-Download $ht
                 New-JsonResponse $context @{ id = $id; status = "downloading" }

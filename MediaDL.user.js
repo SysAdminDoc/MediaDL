@@ -239,6 +239,7 @@
         .mdl-pill-btn svg { width: 16px; height: 16px; fill: currentColor; }
         .mdl-pill-btn.video { background: linear-gradient(135deg, #00b894, #00a085); color: white; }
         .mdl-pill-btn.audio { background: linear-gradient(135deg, #6c5ce7, #5b4cdb); color: white; }
+        .mdl-pill-btn.record { background: linear-gradient(135deg, #ef4444, #c81e1e); color: white; font-size: 9px; font-weight: 700; }
         .mdl-pill-label {
             font-size: 10px; color: rgba(255,255,255,0.6); padding: 0 4px;
             max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -329,10 +330,11 @@
         return false;
     }
 
-    async function serverDownload(url, title, audioOnly, referer) {
+    async function serverDownload(url, title, audioOnly, referer, recordFromNow) {
         try {
             const r = await serverRequest('POST', '/download', {
-                url, title, audioOnly: !!audioOnly, referer: referer || null
+                url, title, audioOnly: !!audioOnly, referer: referer || null,
+                recordFromNow: !!recordFromNow
             });
             if (r && r.id) {
                 console.log(`MediaDL: Server download started: ${r.id}`);
@@ -483,8 +485,9 @@
 
         const title = getPageTitle();
         const audioOnly = action === 'audio';
+        const recordFromNow = action === 'record';
         const referer = getReferer(url);
-        const isDirect = /fbcdn\.net|\.mp4\?|\.webm\?/.test(url);
+        const isDirect = /fbcdn\.net|\.mp4\?|\.webm\?|\.m3u8(?:\?|$)/i.test(url);
 
         let urlType = 'page URL';
         if (url.includes('fbcdn.net')) urlType = 'direct CDN URL';
@@ -494,7 +497,7 @@
         // --- TIER 1: HTTP Server ---
         if (serverAlive) {
             showToast(`Starting ${action} download via server...`, 'info', 1500);
-            const ok = await serverDownload(url, title, audioOnly, referer);
+            const ok = await serverDownload(url, title, audioOnly, referer, recordFromNow);
             if (ok) return;
             console.log('MediaDL: Server download failed, trying protocol handler...');
         }
@@ -503,6 +506,7 @@
         const enc = encodeURIComponent(url);
         let params = '';
         if (audioOnly) params += 'ytyt_audio_only=1&';
+        if (recordFromNow) params += 'ytyt_record_from_now=1&';
         if (referer) params += `ytyt_referer=${encodeURIComponent(referer)}&`;
         if (title) params += `ytyt_title=${encodeURIComponent(title)}&`;
 
@@ -575,6 +579,21 @@
     // =========================================================================
     function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
+    function isLiveStreamCandidate(media, url) {
+        const host = location.hostname.replace('www.', '');
+        if (host !== 'youtube.com' && host !== 'twitch.tv' &&
+            !host.endsWith('.youtube.com') && !host.endsWith('.twitch.tv')) return false;
+        if (media && media.duration === Infinity) return true;
+        if (media && media.getAttribute && media.getAttribute('data-live') === 'true') return true;
+        if (host.endsWith('youtube.com') || host === 'youtube.com') {
+            return !!document.querySelector(
+                'ytd-watch-flexy[is-live], #movie_player.ytp-live, .ytp-live-badge'
+            );
+        }
+        return /\/(?!videos\/)[^/]+$/i.test(location.pathname) &&
+            !!document.querySelector('[data-a-target="player-overlay-click-handler"]');
+    }
+
     // =========================================================================
     // VIDEO DETECTION
     // =========================================================================
@@ -591,7 +610,7 @@
         return false;
     }
 
-    function createPill(url, label, color, audioOnly) {
+    function createPill(url, label, color, audioOnly, recordable) {
         const pill = document.createElement('div');
         pill.className = 'mdl-pill';
 
@@ -611,6 +630,19 @@
         mp3Btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); triggerDownload('audio', url); });
         pill.appendChild(mp3Btn);
 
+        if (recordable) {
+            const recordBtn = document.createElement('button');
+            recordBtn.className = 'mdl-pill-btn record';
+            recordBtn.title = 'Record live stream from now';
+            recordBtn.textContent = 'REC';
+            recordBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                triggerDownload('record', url);
+            });
+            pill.appendChild(recordBtn);
+        }
+
         if (label) {
             const lbl = document.createElement('span');
             lbl.className = 'mdl-pill-label';
@@ -621,10 +653,10 @@
         return pill;
     }
 
-    function registerPill(anchorEl, url, label, color, audioOnly) {
+    function registerPill(anchorEl, url, label, color, audioOnly, recordable) {
         const id = 'mdl-' + (++pillCounter);
         anchorEl.setAttribute(CONFIG.pillIdAttr, id);
-        const pill = createPill(url, label, color, audioOnly);
+        const pill = createPill(url, label, color, audioOnly, recordable);
         pill.setAttribute('data-pill-id', id);
         document.body.appendChild(pill);
         pillMap.set(id, { pill, anchorEl });
@@ -687,8 +719,10 @@
             // Skip tiny/hidden videos (ads, trackers)
             const r = video.getBoundingClientRect();
             if (r.width < 80 && r.height < 60 && r.width > 0) return;
-            // Skip native YouTube player (has its own controls)
-            if (isNativePlayer(video)) return;
+            // Skip native YouTube controls except when the player is live and
+            // the recording action is the feature we need to expose.
+            const liveCandidate = isLiveStreamCandidate(video, location.href);
+            if (isNativePlayer(video) && !liveCandidate) return;
 
             const url = extractPlatformUrl(video);
             if (!url) { video.setAttribute(CONFIG.attr, 'skip'); return; }
@@ -703,7 +737,7 @@
             const isAudio = SITE_CONFIGS[currentHost]?.audioOnly ||
                 ((currentHost === 'x.com' || currentHost === 'twitter.com') &&
                     /\/i\/spaces\//i.test(location.pathname));
-            registerPill(anchor, url, label, '#00b894', isAudio);
+            registerPill(anchor, url, label, '#00b894', isAudio, liveCandidate);
         });
     }
 
@@ -717,7 +751,7 @@
             const anchor = findVideoContainer(audio) || audio;
             if (anchor.hasAttribute(CONFIG.attr) && anchor !== audio) return;
             if (anchor !== audio) anchor.setAttribute(CONFIG.attr, '1');
-            registerPill(anchor, url, getSiteLabel(url), '#6c5ce7', true);
+            registerPill(anchor, url, getSiteLabel(url), '#6c5ce7', true, false);
         });
     }
 

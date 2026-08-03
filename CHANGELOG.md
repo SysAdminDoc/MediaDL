@@ -10,6 +10,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: TikTok SSR extraction with watermark-free play URL priority and wmplay fallback.
 - Added: X/Twitter Spaces HLS audio discovery and audio-element scanning.
 - Added: Optional YouTube chapter splitting with section-numbered output files.
+- Added: Live YouTube/Twitch detection with a record-from-now action and protocol fallback.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

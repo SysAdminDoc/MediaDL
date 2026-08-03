@@ -666,11 +666,12 @@ function Start-Server {
             $url = $params.url; $title = $params.title
             $audioOnly = $params.audioOnly -eq $true
             $referer = $params.referer
+            $recordFromNow = $params.recordFromNow -eq $true
             $splitChapters = $config.SplitChapters -eq $true
             if ($params.PSObject.Properties.Name -contains 'splitChapters') {
                 $splitChapters = [bool]$params.splitChapters
             }
-            $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?"
+            $isDirect = $url -match "fbcdn\.net|\.mp4\?|\.webm\?|\.m3u8(?:\?|$)"
 
             $allowedVF = @('mp4','mkv','webm'); $allowedAF = @('mp3','m4a','opus','flac','wav')
             $allowedQ = @('best','2160','1440','1080','720','480')
@@ -729,7 +730,7 @@ function Start-Server {
                 status="downloading"; progress=0; speed=""; eta=""; process=$proc
                 progressFile=$progressFile; startTime=(Get-Date); filename=""; format=$format; quality=$quality; splitChapters=$splitChapters
             })
-            Write-SLog "[$id] Started: $($url.Substring(0,[Math]::Min(60,$url.Length)))..."
+            Write-SLog "[$id] Started: $($url.Substring(0,[Math]::Min(60,$url.Length)))... recordFromNow=$recordFromNow"
             return $id
         }
 
