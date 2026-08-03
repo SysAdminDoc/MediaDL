@@ -16,6 +16,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Authenticated pause/resume endpoints that suspend and resume yt-dlp process trees.
 - Added: Local `/ui` queue viewer with drag-handle priority reordering and download controls.
 - Added: Priority persistence and migration in the SQLite queue journal.
+- Added: Site/video/channel content identity deduplication across userscript, server, and protocol-handler paths.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

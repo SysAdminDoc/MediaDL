@@ -134,7 +134,7 @@ MutationObserver + URL change detection handles single-page navigation on YouTub
 Title and thumbnail fetched in background jobs. The progress popup renders instantly and never freezes.
 
 #### 🎯 Duplicate Prevention
-SHA256 URL lock prevents accidental double-downloads from rapid clicking.
+Content identity lock (site + video ID + channel when available) prevents equivalent page/CDN URLs from being queued twice; a scoped URL hash remains the fallback for sites without stable IDs.
 
 #### 📈 Smooth Progress
 Animated bar with eased interpolation. Reads only last 4KB via `FileStream.Seek`.
@@ -362,7 +362,7 @@ If installing without the wizard:
 | Facebook downloads fail | Click the video to trigger playback first (populates CDN URLs for extraction) |
 | Download fails silently | Verify yt-dlp and ffmpeg are installed and paths are correct in `config.json` |
 | JIT debugging dialog | Update to the latest handler (4-layer crash prevention) |
-| Duplicate downloads | Update to the latest handler (SHA256 URL lock) |
+| Duplicate downloads | Update to the latest handler (content identity lock with URL fallback) |
 
 <br>
 

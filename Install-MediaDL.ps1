@@ -1109,15 +1109,47 @@ if ($videoUrl -match "mdl_title=([^&]+)") {
 $videoUrl = $videoUrl -replace "[?&]$", ""
 $isDirect = $videoUrl -match "fbcdn\.net|\.mp4\?|\.webm\?|\.m3u8(?:\?|$)"
 
-Write-Log "URL: $videoUrl"
+$identitySite = $null
+if ($videoUrl -match "[?&]ytyt_site=([^&]+)") {
+    $identitySite = [System.Uri]::UnescapeDataString($matches[1])
+    $videoUrl = $videoUrl -replace "[&?]ytyt_site=[^&]*", ""
+}
+$videoId = $null
+if ($videoUrl -match "[?&]ytyt_video_id=([^&]+)") {
+    $videoId = [System.Uri]::UnescapeDataString($matches[1])
+    $videoUrl = $videoUrl -replace "[&?]ytyt_video_id=[^&]*", ""
+}
+$channelId = $null
+if ($videoUrl -match "[?&]ytyt_channel_id=([^&]+)") {
+    $channelId = [System.Uri]::UnescapeDataString($matches[1])
+    $videoUrl = $videoUrl -replace "[&?]ytyt_channel_id=[^&]*", ""
+}
+$videoUrl = $videoUrl -replace "[?&]$", ""
+if (-not $videoId -and $videoUrl -match "(?:youtube\.com/(?:[^/]+/.+/|(?:v|e(?:mbed)?)/|.*[?&]v=)|youtu\.be/)([a-zA-Z0-9_-]{11})") {
+    $videoId = $matches[1]
+    if (-not $identitySite) { $identitySite = 'youtube.com' }
+}
+
+Write-Log "URL: $videoUrl | Identity: $identitySite / $channelId / $videoId"
 Write-Log "Audio: $audioOnly | RecordFromNow: $recordFromNow | Direct: $isDirect | Referer: $referer | Title: $pageTitle"
 
 # =========================================================================
-# DUPLICATE PREVENTION (URL hash lock)
+# DUPLICATE PREVENTION (video ID + channel identity lock)
 # =========================================================================
+$identitySite = (($identitySite -replace '^www\.', '').ToLowerInvariant())
+if (-not $identitySite) {
+    try { $identitySite = (([uri]$videoUrl).Host -replace '^www\.', '').ToLowerInvariant() } catch { $identitySite = 'unknown' }
+}
+$identityChannel = if ($channelId) { $channelId.ToLowerInvariant() } else { 'unknown' }
+$identityVideo = if ($videoId) { $videoId.ToLowerInvariant() } else { 'unknown' }
+$identityKey = if ($videoId) {
+    "id|$identitySite|$identityChannel|$identityVideo|$(if ($audioOnly) { 'audio' } else { 'video' })"
+} else {
+    "url|$identitySite|$($videoUrl.ToLowerInvariant())|$(if ($audioOnly) { 'audio' } else { 'video' })"
+}
 $urlHash = [System.BitConverter]::ToString(
     [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-        [System.Text.Encoding]::UTF8.GetBytes("$videoUrl|$audioOnly")
+        [System.Text.Encoding]::UTF8.GetBytes($identityKey)
     )
 ).Substring(0,11) -replace '-',''
 $dupLock = Join-Path $env:TEMP "mdl_dl_$urlHash.lock"
@@ -1125,17 +1157,12 @@ if (Test-Path $dupLock) {
     # Check if the owning process is still alive
     $ownerPid = (Get-Content $dupLock -Raw -ErrorAction SilentlyContinue) -replace '\s',''
     if ($ownerPid -match '^\d+$' -and (Get-Process -Id ([int]$ownerPid) -ErrorAction SilentlyContinue)) {
-        Write-Log "Duplicate download blocked (PID $ownerPid already downloading this URL)"
+        Write-Log "Duplicate download blocked (PID $ownerPid already downloading this content identity)"
         exit 0
     }
     Remove-Item $dupLock -Force -ErrorAction SilentlyContinue
 }
 "$PID" | Out-File $dupLock -Force
-
-$videoId = $null
-if ($videoUrl -match "(?:youtube\.com/(?:[^/]+/.+/|(?:v|e(?:mbed)?)/|.*[?&]v=)|youtu\.be/)([a-zA-Z0-9_-]{11})") {
-    $videoId = $matches[1]
-}
 
 $iconPath = Join-Path $PSScriptRoot "icon.ico"
 $progressFile = Join-Path $env:TEMP "mdl_progress_$([guid]::NewGuid().ToString('N')).txt"
@@ -1906,6 +1933,10 @@ CREATE TABLE IF NOT EXISTS downloads (
     eta TEXT,
     filename TEXT,
     priority INTEGER NOT NULL DEFAULT 0,
+    content_key TEXT,
+    video_id TEXT,
+    channel_id TEXT,
+    source_url TEXT,
     split_chapters INTEGER NOT NULL DEFAULT 0,
     record_from_now INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -1914,8 +1945,11 @@ CREATE TABLE IF NOT EXISTS downloads (
 CREATE INDEX IF NOT EXISTS idx_downloads_status_created ON downloads(status, created_at);
 "@
     $columns = Invoke-QueueSql "PRAGMA table_info(downloads);" -Json
-    if ($columns -and $columns -notmatch '"name":"priority"') {
-        Invoke-QueueSql "ALTER TABLE downloads ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;"
+    foreach ($column in @('priority','content_key','video_id','channel_id','source_url')) {
+        if ($columns -and $columns -notmatch ('"name":"' + $column + '"')) {
+            $definition = if ($column -eq 'priority') { 'INTEGER NOT NULL DEFAULT 0' } else { 'TEXT' }
+            Invoke-QueueSql "ALTER TABLE downloads ADD COLUMN $column $definition;"
+        }
     }
 }
 
@@ -1926,7 +1960,7 @@ function Save-QueueRecord {
     $created = if ($Download.startTime) { ([datetime]$Download.startTime).ToUniversalTime().ToString('o') } else { $now }
     $sql = @"
 INSERT OR REPLACE INTO downloads
- (id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,priority,split_chapters,record_from_now,created_at,updated_at)
+ (id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,priority,content_key,video_id,channel_id,source_url,split_chapters,record_from_now,created_at,updated_at)
 VALUES (
  $(ConvertTo-SqliteLiteral $Download.id),
  $(ConvertTo-SqliteLiteral $Download.url),
@@ -1942,6 +1976,10 @@ VALUES (
  $(ConvertTo-SqliteLiteral $Download.eta),
  $(ConvertTo-SqliteLiteral $Download.filename),
  $([int]$Download.priority),
+ $(ConvertTo-SqliteLiteral $Download.contentKey),
+ $(ConvertTo-SqliteLiteral $Download.videoId),
+ $(ConvertTo-SqliteLiteral $Download.channelId),
+ $(ConvertTo-SqliteLiteral $Download.sourceUrl),
  $(if ($Download.splitChapters) { 1 } else { 0 }),
  $(if ($Download.recordFromNow) { 1 } else { 0 }),
  $(ConvertTo-SqliteLiteral $created),
@@ -1953,7 +1991,7 @@ VALUES (
 
 function Restore-QueueEntries {
     if (-not $sqlitePath) { return }
-    $json = Invoke-QueueSql "SELECT id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,priority,split_chapters,record_from_now,created_at FROM downloads WHERE status NOT IN ('complete','failed','cancelled') ORDER BY priority,created_at;" -Json
+    $json = Invoke-QueueSql "SELECT id,url,title,audio_only,referer,format,quality,output_dir,status,progress,speed,eta,filename,priority,content_key,video_id,channel_id,source_url,split_chapters,record_from_now,created_at FROM downloads WHERE status NOT IN ('complete','failed','cancelled') ORDER BY priority,created_at;" -Json
     if (-not $json) { return }
     try { $rows = @($json | ConvertFrom-Json) } catch { return }
     foreach ($row in $rows) {
@@ -1965,6 +2003,7 @@ function Restore-QueueEntries {
             progress=[double]$row.progress; speed="$($row.speed)"; eta="$($row.eta)"
             process=$null; progressFile=""; startTime=$start; filename="$($row.filename)"
             format="$($row.format)"; quality="$($row.quality)"; priority=[int]$row.priority
+            contentKey="$($row.content_key)"; videoId="$($row.video_id)"; channelId="$($row.channel_id)"; sourceUrl="$($row.source_url)"
             splitChapters=([int]$row.split_chapters -eq 1); recordFromNow=([int]$row.record_from_now -eq 1)
             referer="$($row.referer)"; outputDir="$($row.output_dir)"
         }
@@ -1990,6 +2029,83 @@ function Get-NextQueuePriority {
     })
     if ($priorities.Count -eq 0) { return 0 }
     return ([int](($priorities | Measure-Object -Maximum).Maximum) + 1)
+}
+
+function Normalize-IdentityPart {
+    param([string]$Value)
+    $clean = "$Value".Trim().ToLowerInvariant()
+    if (-not $clean) { return 'unknown' }
+    $clean = $clean -replace '[^a-z0-9._:@-]', '_'
+    if ($clean.Length -gt 160) { $clean = $clean.Substring(0,160) }
+    return $clean
+}
+
+function Get-DownloadIdentity {
+    param([string]$Url, [string]$SourceUrl, [string]$VideoId, [string]$ChannelId, [string]$Site, [bool]$AudioOnly)
+    $candidate = if ($SourceUrl) { "$SourceUrl" } else { "$Url" }
+    $id = if ($VideoId) { "$VideoId" } else { $null }
+    $channel = if ($ChannelId) { "$ChannelId" } else { $null }
+    $siteKey = if ($Site) { "$Site" } else { $null }
+    try {
+        $uri = [uri]$candidate
+        $uriHost = ($uri.Host -replace '^www\.', '').ToLowerInvariant()
+        $path = $uri.AbsolutePath
+        if (-not $siteKey) { $siteKey = $uriHost }
+        if ($uriHost -eq 'youtu.be' -or $uriHost -match '(^|\.)youtube\.com$') {
+            if (-not $id -and $uri.Query -match '[?&]v=([^&]+)') { $id = [uri]::UnescapeDataString($matches[1]) }
+            if (-not $id -and $path -match '/(?:shorts|embed|v)/([^/?]+)') { $id = [uri]::UnescapeDataString($matches[1]) }
+            if (-not $id -and $uriHost -eq 'youtu.be' -and $path -match '^/([^/?]+)') { $id = [uri]::UnescapeDataString($matches[1]) }
+            if (-not $channel -and $path -match '/(?:@|channel/|c/|user/)([^/?]+)') { $channel = [uri]::UnescapeDataString($matches[1]) }
+            $siteKey = 'youtube.com'
+        } elseif ($uriHost -match '(^|\.)tiktok\.com$') {
+            if (-not $id -and $path -match '/video/(\d+)') { $id = $matches[1] }
+            if (-not $channel -and $path -match '/@([^/]+)') { $channel = [uri]::UnescapeDataString($matches[1]) }
+            $siteKey = 'tiktok.com'
+        } elseif ($uriHost -match '(^|\.)instagram\.com$') {
+            if (-not $id -and $path -match '/(?:reel|reels|p|tv)/([^/?]+)') { $id = [uri]::UnescapeDataString($matches[1]) }
+            if (-not $channel -and $path -match '^/(?:stories/)?([^/]+)') { $channel = [uri]::UnescapeDataString($matches[1]) }
+            $siteKey = 'instagram.com'
+        } elseif ($uriHost -eq 'x.com' -or $uriHost -match '(^|\.)twitter\.com$') {
+            if (-not $id -and $path -match '/status/(\d+)') { $id = $matches[1] }
+            if (-not $channel -and $path -match '^/([^/]+)/status/') { $channel = [uri]::UnescapeDataString($matches[1]) }
+            $siteKey = 'x.com'
+        } elseif ($uriHost -match '(^|\.)twitch\.tv$') {
+            if (-not $id -and $path -match '/videos/(\d+)') { $id = $matches[1] }
+            if (-not $channel -and $path -match '^/([^/]+)') { $channel = [uri]::UnescapeDataString($matches[1]) }
+            $siteKey = 'twitch.tv'
+        } elseif ($uriHost -match '(^|\.)facebook\.com$' -or $uriHost -eq 'fb.com') {
+            if (-not $id -and $path -match '/(?:videos|reel|reels)/(\d+)') { $id = $matches[1] }
+            if (-not $channel -and $path -match '^/([^/]+)/(?:videos|reel|reels)/') { $channel = [uri]::UnescapeDataString($matches[1]) }
+            $siteKey = 'facebook.com'
+        } elseif ($uriHost -match '(^|\.)reddit\.com$') {
+            if (-not $id -and $path -match '/r/([^/]+)/comments/([^/?]+)') { $channel = [uri]::UnescapeDataString($matches[1]); $id = $matches[2] }
+            $siteKey = 'reddit.com'
+        } elseif ($uriHost -match '(^|\.)vimeo\.com$') {
+            if (-not $id -and $path -match '/(?:video/)?(\d+)') { $id = $matches[1] }
+            $siteKey = 'vimeo.com'
+        } elseif (-not $id -and $path -match '/(?:video|watch|status|reel|shorts)/([^/?]+)') {
+            $id = [uri]::UnescapeDataString($matches[1])
+        }
+    } catch {}
+    if (-not $siteKey) { $siteKey = (Get-SiteKey $candidate) -replace '^www\.', '' }
+    $siteKey = Normalize-IdentityPart $siteKey
+    if ($id) {
+        $key = "id|$siteKey|$(Normalize-IdentityPart $channel)|$(Normalize-IdentityPart $id)|$(if ($AudioOnly) { 'audio' } else { 'video' })"
+    } else {
+        $canonical = ($candidate.ToLowerInvariant() -replace '#.*$' -replace '[?&](utm_[^=]+|si|feature)=[^&]*','')
+        $hash = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$siteKey|$canonical"))).Replace('-','').Substring(0,24).ToLowerInvariant()
+        $key = "url|$hash|$(if ($AudioOnly) { 'audio' } else { 'video' })"
+    }
+    return [pscustomobject]@{ key=$key; site=$siteKey; videoId=$id; channelId=$channel; sourceUrl=$candidate }
+}
+
+function Find-QueueDuplicate {
+    param([string]$ContentKey)
+    if (-not $ContentKey) { return $null }
+    foreach ($dl in @($downloads.Values | Sort-Object startTime)) {
+        if ($dl.contentKey -eq $ContentKey -and $dl.status -notmatch 'complete|failed|cancelled') { return $dl }
+    }
+    return $null
 }
 
 function Get-DownloadProcessIds {
@@ -2246,9 +2362,10 @@ function Start-Download {
     $progressFile = Join-Path $env:TEMP "mdl_progress_$id.txt"
     "" | Set-Content $progressFile -Force
 
+    $audioOnly = $params.audioOnly -eq $true
     $url = $params.url
     $title = $params.title
-    $audioOnly = $params.audioOnly -eq $true
+    $identity = Get-DownloadIdentity -Url $url -SourceUrl $params.sourceUrl -VideoId $params.videoId -ChannelId $params.channelId -Site $params.site -AudioOnly $audioOnly
     $referer = $params.referer
     $recordFromNow = $params.recordFromNow -eq $true
     $splitChapters = $config.SplitChapters -eq $true
@@ -2425,6 +2542,7 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
         speed = ""; eta = ""; process = $proc; progressFile = $progressFile
         startTime = (Get-Date); filename = ""; format = $format; quality = $quality
         splitChapters = $splitChapters; recordFromNow = $recordFromNow; priority = (Get-NextQueuePriority)
+        contentKey = $identity.key; videoId = $identity.videoId; channelId = $identity.channelId; sourceUrl = $identity.sourceUrl
         referer = $referer; outputDir = $outDir
     }
     Save-QueueRecord $downloads[$id]
@@ -2601,6 +2719,13 @@ while ($listener.IsListening) {
                 try { $params = $body | ConvertFrom-Json } catch { New-JsonResponse $context @{ error = "Invalid JSON" } 400; break }
                 if (-not $params.url) { New-JsonResponse $context @{ error = "Missing url" } 400; break }
 
+                $identity = Get-DownloadIdentity -Url $params.url -SourceUrl $params.sourceUrl -VideoId $params.videoId -ChannelId $params.channelId -Site $params.site -AudioOnly ($params.audioOnly -eq $true)
+                $duplicate = Find-QueueDuplicate $identity.key
+                if ($duplicate) {
+                    New-JsonResponse $context @{ error = "Duplicate download"; duplicateId = $duplicate.id; contentKey = $identity.key; title = $duplicate.title } 409
+                    break
+                }
+
                 $active = ($downloads.Values | Where-Object { $_.status -eq 'downloading' -or $_.status -eq 'merging' -or $_.status -eq 'extracting' }).Count
                 if ($active -ge $MAX_CONCURRENT) {
                     New-JsonResponse $context @{ error = "Too many concurrent downloads"; active = $active } 429
@@ -2768,6 +2893,7 @@ while ($listener.IsListening) {
                         id = $dl.id; status = $dl.status; progress = [math]::Round($dl.progress, 1)
                         title = $dl.title; speed = $dl.speed; eta = $dl.eta
                         priority = [int]$dl.priority; site = Get-SiteKey $dl.url
+                        videoId = $dl.videoId; channelId = $dl.channelId
                     }
                 }
                 New-JsonResponse $context @{ downloads = $list; count = $list.Count }

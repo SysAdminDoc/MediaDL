@@ -330,11 +330,14 @@
         return false;
     }
 
-    async function serverDownload(url, title, audioOnly, referer, recordFromNow) {
+    async function serverDownload(url, title, audioOnly, referer, recordFromNow, identity) {
         try {
             const r = await serverRequest('POST', '/download', {
                 url, title, audioOnly: !!audioOnly, referer: referer || null,
-                recordFromNow: !!recordFromNow
+                recordFromNow: !!recordFromNow,
+                site: identity?.site || null,
+                videoId: identity?.videoId || null,
+                channelId: identity?.channelId || null
             });
             if (r && r.id) {
                 console.log(`MediaDL: Server download started: ${r.id}`);
@@ -343,6 +346,10 @@
             }
             if (r && r.error) {
                 console.log(`MediaDL: Server error: ${r.error}`);
+                if (r.error === 'Duplicate download') {
+                    showToast('Already queued for download', 'warn', 3500);
+                    return true;
+                }
                 if (r.error === 'Unauthorized') {
                     showToast('Server auth failed - check token', 'error');
                 }
@@ -468,6 +475,87 @@
         return title;
     }
 
+    function getIdentitySite(hostname) {
+        const host = String(hostname || '').replace(/^www\./i, '').toLowerCase();
+        if (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) return 'youtube.com';
+        if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok.com';
+        if (host === 'instagram.com' || host.endsWith('.instagram.com')) return 'instagram.com';
+        if (host === 'x.com' || host === 'twitter.com' || host.endsWith('.twitter.com')) return 'x.com';
+        if (host === 'twitch.tv' || host.endsWith('.twitch.tv')) return 'twitch.tv';
+        if (host === 'facebook.com' || host === 'fb.com' || host.endsWith('.facebook.com')) return 'facebook.com';
+        if (host === 'reddit.com' || host.endsWith('.reddit.com')) return 'reddit.com';
+        if (host === 'vimeo.com' || host.endsWith('.vimeo.com')) return 'vimeo.com';
+        return host || 'unknown';
+    }
+
+    function decodeIdentityPart(value) {
+        if (!value) return null;
+        try { return decodeURIComponent(String(value)).trim().substring(0, 160) || null; } catch { return String(value).trim().substring(0, 160) || null; }
+    }
+
+    function getContentIdentity(rawUrl) {
+        let pageUrl;
+        let candidateUrl;
+        try { pageUrl = new URL(location.href); } catch { pageUrl = null; }
+        try { candidateUrl = new URL(rawUrl || location.href, location.href); } catch { candidateUrl = pageUrl; }
+
+        const pageSite = getIdentitySite(pageUrl?.hostname);
+        const candidateSite = getIdentitySite(candidateUrl?.hostname);
+        const knownPage = pageSite !== 'unknown';
+        const site = knownPage ? pageSite : candidateSite;
+        let videoId = null;
+        let channelId = null;
+
+        const inspect = (url, siteName) => {
+            if (!url || videoId && channelId) return;
+            const path = url.pathname || '';
+            const pick = (pattern) => {
+                const match = path.match(pattern);
+                return match ? decodeIdentityPart(match[1]) : null;
+            };
+            if (siteName === 'youtube.com') {
+                videoId = videoId || decodeIdentityPart(url.searchParams.get('v')) || pick(/\/(?:shorts|embed|v)\/([^/?]+)/i);
+                if (!videoId && url.hostname === 'youtu.be') videoId = pick(/^\/([^/?]+)/);
+                channelId = channelId || pick(/\/(?:@|channel\/|c\/|user\/)([^/?]+)/i);
+            } else if (siteName === 'tiktok.com') {
+                videoId = videoId || pick(/\/video\/(\d+)/i);
+                channelId = channelId || pick(/\/@([^/]+)/i);
+            } else if (siteName === 'instagram.com') {
+                videoId = videoId || pick(/\/(?:reel|reels|p|tv)\/([^/?]+)/i);
+                channelId = channelId || pick(/^\/stories\/([^/]+)/i) || pick(/^\/([^/]+)\/(?:reel|reels|p|tv)\//i);
+            } else if (siteName === 'x.com') {
+                videoId = videoId || pick(/\/status\/(\d+)/i);
+                channelId = channelId || pick(/^\/([^/]+)\/status\//i);
+            } else if (siteName === 'twitch.tv') {
+                videoId = videoId || pick(/\/videos\/(\d+)/i);
+                channelId = channelId || pick(/^\/([^/]+)/i);
+            } else if (siteName === 'facebook.com') {
+                videoId = videoId || pick(/\/(?:videos|reel|reels)\/(\d+)/i);
+                channelId = channelId || pick(/^\/([^/]+)\/(?:videos|reel|reels)\//i);
+            } else if (siteName === 'reddit.com') {
+                const match = path.match(/\/r\/([^/]+)\/comments\/([^/?]+)/i);
+                if (match) { channelId = channelId || decodeIdentityPart(match[1]); videoId = videoId || decodeIdentityPart(match[2]); }
+            } else if (siteName === 'vimeo.com') {
+                videoId = videoId || pick(/\/(?:video\/)?(\d+)/i);
+            }
+            if (!videoId) videoId = pick(/\/(?:video|watch|status|reel|shorts)\/([^/?]+)/i);
+        };
+
+        if (knownPage) inspect(pageUrl, pageSite);
+        if ((!videoId || !channelId) && candidateUrl && candidateUrl.href !== pageUrl?.href) inspect(candidateUrl, candidateSite);
+
+        if (site === 'youtube.com' && !channelId && document?.querySelector) {
+            const channelNode = document.querySelector('meta[itemprop="channelId"], ytd-video-owner-renderer a[href*="/channel/"], ytd-video-owner-renderer a[href*="/@"]');
+            const channelHref = channelNode?.content || channelNode?.getAttribute?.('href') || '';
+            channelId = decodeIdentityPart(channelHref.match(/(?:\/channel\/|\/@)([^/?]+)/i)?.[1]);
+            if (!channelId) {
+                const source = Array.from(document.scripts || []).map(script => script.textContent || '').find(text => /"channelId"\s*:\s*"[^"\n]+"/.test(text));
+                channelId = decodeIdentityPart(source?.match(/"channelId"\s*:\s*"([^"\n]+)"/)?.[1]);
+            }
+        }
+        return { site, videoId, channelId };
+    }
+
     function getReferer(url) {
         if (url && url.includes('fbcdn.net')) return 'https://www.facebook.com/';
         return REFERER_SITES[location.hostname] || REFERER_SITES[location.hostname.replace('www.','')] || null;
@@ -487,6 +575,7 @@
         const audioOnly = action === 'audio';
         const recordFromNow = action === 'record';
         const referer = getReferer(url);
+        const identity = getContentIdentity(url);
         const isDirect = /fbcdn\.net|\.mp4\?|\.webm\?|\.m3u8(?:\?|$)/i.test(url);
 
         let urlType = 'page URL';
@@ -497,7 +586,7 @@
         // --- TIER 1: HTTP Server ---
         if (serverAlive) {
             showToast(`Starting ${action} download via server...`, 'info', 1500);
-            const ok = await serverDownload(url, title, audioOnly, referer, recordFromNow);
+            const ok = await serverDownload(url, title, audioOnly, referer, recordFromNow, identity);
             if (ok) return;
             console.log('MediaDL: Server download failed, trying protocol handler...');
         }
@@ -507,6 +596,9 @@
         let params = '';
         if (audioOnly) params += 'ytyt_audio_only=1&';
         if (recordFromNow) params += 'ytyt_record_from_now=1&';
+        if (identity?.site) params += `ytyt_site=${encodeURIComponent(identity.site)}&`;
+        if (identity?.videoId) params += `ytyt_video_id=${encodeURIComponent(identity.videoId)}&`;
+        if (identity?.channelId) params += `ytyt_channel_id=${encodeURIComponent(identity.channelId)}&`;
         if (referer) params += `ytyt_referer=${encodeURIComponent(referer)}&`;
         if (title) params += `ytyt_title=${encodeURIComponent(title)}&`;
 
