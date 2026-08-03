@@ -89,6 +89,8 @@ MediaDL has optimized detection for these platforms, including Instagram Reels, 
 #### 🔍 Auto-Detect
 Scans every page for video and audio elements. Attaches floating download pills automatically — no clicking required.
 
+TikTok uses server-rendered play URLs first for watermark-free MP4, with `wmplay`/download fallback when only a watermarked stream is exposed.
+
 #### 🛡️ 3-Tier Failover
 HTTP server → protocol handler → GM_download. If one method fails, the next activates seamlessly.
 

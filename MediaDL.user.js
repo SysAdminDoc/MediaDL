@@ -718,6 +718,12 @@
             return extractInstagramUrl(video);
         }
 
+        // TikTok's player commonly uses blob: while the clean MP4 remains in
+        // the server-rendered hydration payload.
+        if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) {
+            return extractTikTokUrl(video);
+        }
+
         // Facebook - multi-strategy extraction
         if (host === 'facebook.com' || host === 'fb.com' || host.endsWith('.facebook.com')) {
             return extractFacebookUrl(video);
@@ -830,6 +836,88 @@
             if (/\.(?:jpg|jpeg|png|gif|webp|svg)(?:[?#]|$)/i.test(parsed.pathname)) return false;
             return /\.(?:mp4|m3u8)$/i.test(parsed.pathname) ||
                 /(?:\/v\/|video|bytestart=|_nc_cat=|oe=)/i.test(parsed.href);
+        } catch { return false; }
+    }
+
+    // =========================================================================
+    // TIKTOK EXTRACTION
+    // Prefer SSR playAddr/no-watermark fields, then wmplay/downloadAddr.
+    // =========================================================================
+    function extractTikTokUrl(video) {
+        const embedded = extractTikTokWebSsrUrl();
+        if (embedded) {
+            console.log('MediaDL [TT]: SSR video URL found');
+            return embedded;
+        }
+
+        const directCandidates = [
+            video.currentSrc,
+            video.src,
+            video.getAttribute('data-src'),
+            video.getAttribute('data-video-url')
+        ];
+        const source = video.querySelector('source[src]');
+        if (source) directCandidates.push(source.src || source.getAttribute('src'));
+        const direct = directCandidates.find(url => url && !url.startsWith('blob:') && isTikTokVideoUrl(url));
+        if (direct) {
+            console.log('MediaDL [TT]: Direct video URL found');
+            return direct;
+        }
+
+        return location.href;
+    }
+
+    function extractTikTokWebSsrUrl() {
+        const clean = [];
+        const watermarkFallback = [];
+        const scripts = document.querySelectorAll(
+            'script#__UNIVERSAL_DATA_FOR_REHYDRATION__, script#SIGI_STATE, script#__NEXT_DATA__, script[type="application/json"], script:not([src])'
+        );
+        for (const script of scripts) {
+            const raw = (script.textContent || '').slice(0, 3000000);
+            if (raw.length < 20 || !/(playAddr|play_addr|wmplay|downloadAddr|videoData|itemStruct)/i.test(raw)) {
+                continue;
+            }
+            const text = raw
+                .replace(/\\"/g, '"')
+                .replace(/\\\//g, '/')
+                .replace(/\\u0025/gi, '%')
+                .replace(/\\u0026/gi, '&')
+                .replace(/\\u003d/gi, '=')
+                .replace(/\\u002f/gi, '/');
+
+            collectTikTokField(text, /"(?:playAddr|play_addr|playUrl|play_url|downloadAddrNoWatermark|no_watermark_url|hdplay)"\s*:\s*"([^"]+)"/gi, clean);
+            collectTikTokField(text, /"(?:wmplay|wmPlay|wm_video_url|downloadAddr|download_addr)"\s*:\s*"([^"]+)"/gi, watermarkFallback);
+        }
+
+        return clean.map(normalizeTikTokUrl).find(isTikTokVideoUrl) ||
+            watermarkFallback.map(normalizeTikTokUrl).find(isTikTokVideoUrl) || null;
+    }
+
+    function collectTikTokField(text, pattern, target) {
+        let match;
+        while ((match = pattern.exec(text))) target.push(match[1]);
+    }
+
+    function normalizeTikTokUrl(rawUrl) {
+        return String(rawUrl || '')
+            .replace(/\\"/g, '"')
+            .replace(/\\\//g, '/')
+            .replace(/\\u0025/gi, '%')
+            .replace(/\\u0026/gi, '&')
+            .replace(/\\u003d/gi, '=')
+            .replace(/\\u002f/gi, '/')
+            .replace(/&amp;/g, '&');
+    }
+
+    function isTikTokVideoUrl(url) {
+        try {
+            const parsed = new URL(url, location.href);
+            if (!/^https?:$/i.test(parsed.protocol)) return false;
+            if (/\.(?:jpg|jpeg|png|gif|webp|svg)(?:[?#]|$)/i.test(parsed.pathname)) return false;
+            return /\.(?:mp4|m3u8)(?:[?#]|$)/i.test(parsed.pathname) ||
+                /(?:tiktokcdn\.com|ibytedtos\.com|muscdn\.com|byteoversea\.com)$/i.test(parsed.hostname) &&
+                /(?:video|play|download|wmplay|v\/)/i.test(parsed.href);
         } catch { return false; }
     }
 
