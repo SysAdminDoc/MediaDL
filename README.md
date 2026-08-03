@@ -98,6 +98,8 @@ Live YouTube and Twitch players expose a `REC` action that starts a server-backe
 #### 🛡️ 3-Tier Failover
 HTTP server → protocol handler → GM_download. If one method fails, the next activates seamlessly.
 
+Video pills include a click-or-hold quality picker for Best, 720p, 1080p, and 4K. The server also applies editable per-host presets for format, quality, codec, and audio fallback.
+
 </td>
 <td width="33%" valign="top">
 
@@ -154,6 +156,9 @@ Enable chapter splitting in the server settings to emit one file per YouTube `Ch
 
 #### 🎵 Music Post-Processing
 Enable the opt-in post-processing switches to extract audio after a video completes, tag it through MusicBrainz, and move it to a collision-safe Music folder filename.
+
+#### 🎛️ Format Control
+Configure host presets in the server settings JSON. The built-in examples request 1080p AV1 MP4 for YouTube, best MP4 for X/Twitter, and FLAC with an MP3 retry for SoundCloud.
 
 #### 📂 Open on Complete
 Click "Complete!" to open Explorer with the downloaded file pre-selected.
@@ -254,7 +259,7 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 |:--|:--|:--:|:--|
 | `GET` | `/health` | — | Server status. Returns auth token when `X-MDL-Client: MediaDL` header is present |
 | `GET` | `/ui` | — | Local queue viewer with drag handles and download controls |
-| `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer}`. Returns `{id}` |
+| `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer, format, quality}`. Returns `{id}` |
 | `GET` | `/status/:id` | 🔐 | `{status, progress, speed, eta, filename}` |
 | `GET` | `/queue` | 🔐 | Priority-ordered array of downloads with status and site |
 | `POST` | `/queue/reorder` | 🔐 | Persist priority order. Body: `{ids: [...]}` |

@@ -1026,6 +1026,12 @@ $btnNext.Add_Click({
                         PostProcessAudio = $false
                         PostProcessMusicBrainz = $false
                         MusicFolder = (Join-Path $env:USERPROFILE "Music\MediaDL")
+                        SitePresets = [ordered]@{
+                            'youtube.com' = [ordered]@{ format = 'mp4'; quality = '1080'; codec = 'av01' }
+                            'twitter.com' = [ordered]@{ format = 'mp4'; quality = 'best' }
+                            'x.com' = [ordered]@{ format = 'mp4'; quality = 'best' }
+                            'soundcloud.com' = [ordered]@{ format = 'flac'; quality = 'best'; fallbackFormat = 'mp3' }
+                        }
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1033,7 +1039,7 @@ $btnNext.Add_Click({
                         ServerToken = [guid]::NewGuid().ToString('N')
                         ServerPort = 9751
                     }
-                    $config | ConvertTo-Json | Set-Content (Join-Path $script:InstallPath "config.json") -Encoding UTF8
+                    $config | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $script:InstallPath "config.json") -Encoding UTF8
                     Update-Status "  [OK] Configuration saved"
                     Set-Progress 50
 
@@ -1094,6 +1100,17 @@ $videoUrl = $videoUrl -replace "[&?]yt(?:yt|kit)_audio_only=1", ""
 
 $recordFromNow = $videoUrl -match "yt(?:yt|kit)_record_from_now=1"
 $videoUrl = $videoUrl -replace "[&?]yt(?:yt|kit)_record_from_now=1", ""
+
+$requestedFormat = $null
+if ($videoUrl -match "[?&]ytyt_format=([^&]+)") {
+    $requestedFormat = [System.Uri]::UnescapeDataString($matches[1]).ToLowerInvariant()
+    $videoUrl = $videoUrl -replace "[&?]ytyt_format=[^&]*", ""
+}
+$requestedQuality = $null
+if ($videoUrl -match "[?&]ytyt_quality=([^&]+)") {
+    $requestedQuality = [System.Uri]::UnescapeDataString($matches[1]).ToLowerInvariant()
+    $videoUrl = $videoUrl -replace "[&?]ytyt_quality=[^&]*", ""
+}
 
 $referer = $null
 if ($videoUrl -match "mdl_referer=([^&]+)") {
@@ -1166,6 +1183,47 @@ if (Test-Path $dupLock) {
     Remove-Item $dupLock -Force -ErrorAction SilentlyContinue
 }
 "$PID" | Out-File $dupLock -Force
+
+$sitePreset = $null
+if ($config.SitePresets -and $identitySite) {
+    $presetProperties = if ($config.SitePresets -is [System.Collections.IDictionary]) {
+        @($config.SitePresets.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Name = "$($_.Key)"; Value = $_.Value } })
+    } else {
+        @($config.SitePresets.PSObject.Properties | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Value = $_.Value } })
+    }
+    foreach ($property in $presetProperties) {
+        $presetKey = ("$($property.Name)").Trim().ToLowerInvariant() -replace '^www\.', ''
+        if ($identitySite -eq $presetKey -or $identitySite.EndsWith(".$presetKey")) { $sitePreset = $property.Value; break }
+    }
+}
+$allowedVideoFormats = @('mp4','mkv','webm')
+$allowedAudioFormats = @('mp3','m4a','opus','flac','wav')
+$allowedQualities = @('best','2160','1440','1080','720','480')
+$downloadFormat = if ($audioOnly) {
+    $candidate = if ($requestedFormat) { $requestedFormat } elseif ($sitePreset -and $sitePreset.format) { "$($sitePreset.format)".ToLowerInvariant() } else { 'mp3' }
+    if ($allowedAudioFormats -contains $candidate) { $candidate } else { 'mp3' }
+} else {
+    $candidate = if ($requestedFormat) { $requestedFormat } elseif ($sitePreset -and $sitePreset.format) { "$($sitePreset.format)".ToLowerInvariant() } else { 'mp4' }
+    if ($allowedVideoFormats -contains $candidate) { $candidate } else { 'mp4' }
+}
+$downloadQuality = if ($requestedQuality) { $requestedQuality } elseif ($sitePreset -and $sitePreset.quality) { "$($sitePreset.quality)".ToLowerInvariant() } else { 'best' }
+if ($allowedQualities -notcontains $downloadQuality) { $downloadQuality = 'best' }
+$downloadCodec = if (-not $audioOnly -and $sitePreset -and @('av01','vp9','h264','hevc') -contains ("$($sitePreset.codec)".ToLowerInvariant())) { "$($sitePreset.codec)".ToLowerInvariant() } else { 'auto' }
+$videoSelector = switch ($downloadCodec) {
+    'av01' { 'bestvideo[vcodec^=av01]' }
+    'vp9'  { 'bestvideo[vcodec^=vp9]' }
+    'h264' { 'bestvideo[vcodec^=avc1]' }
+    'hevc' { 'bestvideo[vcodec^=hev1]' }
+    default { 'bestvideo' }
+}
+if ($downloadQuality -eq 'best') {
+    $formatSelector = if ($downloadCodec -eq 'auto') { 'bestvideo+bestaudio/best' } else { "$videoSelector+bestaudio/bestvideo+bestaudio/best" }
+} else {
+    $heightSelector = "$videoSelector[height<=$downloadQuality]"
+    $fallbackHeight = "bestvideo[height<=$downloadQuality]"
+    $formatSelector = if ($downloadCodec -eq 'auto') { "$fallbackHeight+bestaudio/best[height<=$downloadQuality]/best" } else { "$heightSelector+bestaudio/$fallbackHeight+bestaudio/best[height<=$downloadQuality]/best" }
+}
+Write-Log "Preset: site=$identitySite format=$downloadFormat quality=$downloadQuality codec=$downloadCodec"
 
 $iconPath = Join-Path $PSScriptRoot "icon.ico"
 $progressFile = Join-Path $env:TEMP "mdl_progress_$([guid]::NewGuid().ToString('N')).txt"
@@ -1507,48 +1565,56 @@ $timer.Add_Tick({
         "" | Set-Content $progressFile -Force
 
         if ($audioOnly) {
-            $outTpl = if ($isDirect -and $pageTitle) { Join-Path $config.DownloadPath "$pageTitle.mp3" }
-                      else { Join-Path $config.DownloadPath "%(title)s.mp3" }
+            $outTpl = if ($isDirect -and $pageTitle) { Join-Path $config.DownloadPath "$pageTitle.$downloadFormat" }
+                      else { Join-Path $config.DownloadPath "%(title)s.$downloadFormat" }
             $lblStatus.Text = if ($recordFromNow) { "Recording live audio..." } else { "Downloading audio..." }
 
             if ($isDirect) {
                 $tmp = Join-Path $config.DownloadPath "mediadl_temp_$([guid]::NewGuid().ToString('N')).mp4"
                 $script:job = Start-Job -ScriptBlock {
-                    param($exe,$ff,$vUrl,$tmp,$out,$pf,$ref)
+                    param($exe,$ff,$vUrl,$tmp,$out,$pf,$ref,$audioFormat)
                     $a = @('--newline','--progress','-o',$tmp)
                     if ($ref) { $a += '--referer'; $a += $ref }
                     $a += $vUrl
                     & $exe @a 2>&1 | ForEach-Object { $_ | Out-File $pf -Append -Encoding utf8; $_ }
                     if (Test-Path $tmp) {
                         "[extract] Extracting audio..." | Out-File $pf -Append -Encoding utf8
-                        & $ff -i $tmp -vn -acodec libmp3lame -q:a 0 -y $out 2>&1 | Out-Null
+                        $codecArgs = switch ($audioFormat) {
+                            'mp3'  { @('-acodec','libmp3lame','-q:a','0') }
+                            'm4a'  { @('-acodec','aac','-b:a','256k') }
+                            'opus' { @('-acodec','libopus','-b:a','192k') }
+                            'flac' { @('-acodec','flac') }
+                            'wav'  { @('-acodec','pcm_s16le') }
+                            default { @('-acodec','libmp3lame','-q:a','0') }
+                        }
+                        & $ff -i $tmp -vn @codecArgs -y $out 2>&1 | Out-Null
                         if (Test-Path $out) {
                             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
                             "[download] 100% audio extraction complete" | Out-File $pf -Append -Encoding utf8
                         }
                     }
-                } -ArgumentList $ytdlp,$config.FfmpegPath,$videoUrl,$tmp,$outTpl,$progressFile,$referer
+                } -ArgumentList $ytdlp,$config.FfmpegPath,$videoUrl,$tmp,$outTpl,$progressFile,$referer,$downloadFormat
             } else {
                 $script:job = Start-Job -ScriptBlock {
-                    param($exe,$ff,$out,$vUrl,$pf,$ref)
-                    $a = @('-f','bestaudio','--extract-audio','--audio-format','mp3','--audio-quality','0','--newline','--progress','--ffmpeg-location',$ff,'-o',$out)
+                    param($exe,$ff,$out,$vUrl,$pf,$ref,$audioFormat)
+                    $a = @('-f','bestaudio','--extract-audio','--audio-format',$audioFormat,'--audio-quality','0','--newline','--progress','--ffmpeg-location',$ff,'-o',$out)
                     if ($ref) { $a += '--referer'; $a += $ref }
                     $a += $vUrl
                     & $exe @a 2>&1 | ForEach-Object { $_ | Out-File $pf -Append -Encoding utf8; $_ }
-                } -ArgumentList $ytdlp,$ffLoc,$outTpl,$videoUrl,$progressFile,$referer
+                } -ArgumentList $ytdlp,$ffLoc,$outTpl,$videoUrl,$progressFile,$referer,$downloadFormat
             }
         } else {
             $outTpl = if ($isDirect -and $pageTitle) { Join-Path $config.DownloadPath "$pageTitle.%(ext)s" }
                       else { Join-Path $config.DownloadPath "%(title)s.%(ext)s" }
             $lblStatus.Text = if ($recordFromNow) { "Recording live stream..." } else { "Downloading..." }
             $script:job = Start-Job -ScriptBlock {
-                param($exe,$ff,$out,$vUrl,$pf,$ref,$direct)
+                param($exe,$ff,$out,$vUrl,$pf,$ref,$direct,$formatSelector,$videoFormat)
                 $a = if ($direct) { @('--newline','--progress','--ffmpeg-location',$ff,'-o',$out) }
-                     else { @('-f','bestvideo[height<=1080]+bestaudio/best[height<=1080]/best','--merge-output-format','mp4','--newline','--progress','--ffmpeg-location',$ff,'-o',$out) }
+                     else { @('-f',$formatSelector,'--merge-output-format',$videoFormat,'--newline','--progress','--ffmpeg-location',$ff,'-o',$out) }
                 if ($ref) { $a += '--referer'; $a += $ref }
                 $a += $vUrl
                 & $exe @a 2>&1 | ForEach-Object { $_ | Out-File $pf -Append -Encoding utf8; $_ }
-            } -ArgumentList $ytdlp,$ffLoc,$outTpl,$videoUrl,$progressFile,$referer,$isDirect
+            } -ArgumentList $ytdlp,$ffLoc,$outTpl,$videoUrl,$progressFile,$referer,$isDirect,$formatSelector,$downloadFormat
         }
         $script:step = 1
     }
@@ -1830,6 +1896,12 @@ $configDefaults = @{
     PostProcessAudio = $false
     PostProcessMusicBrainz = $false
     MusicFolder = (Join-Path $env:USERPROFILE "Music\MediaDL")
+    SitePresets = [ordered]@{
+        'youtube.com' = [ordered]@{ format = 'mp4'; quality = '1080'; codec = 'av01' }
+        'twitter.com' = [ordered]@{ format = 'mp4'; quality = 'best' }
+        'x.com' = [ordered]@{ format = 'mp4'; quality = 'best' }
+        'soundcloud.com' = [ordered]@{ format = 'flac'; quality = 'best'; fallbackFormat = 'mp3' }
+    }
     EmbedSubs = $false
     SubLangs = "en"
     SponsorBlock = $false
@@ -1847,13 +1919,13 @@ foreach ($key in $configDefaults.Keys) {
         $config | Add-Member -NotePropertyName $key -NotePropertyValue $configDefaults[$key] -Force
     }
 }
-$config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
+$config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
 
 $authToken = $config.ServerToken
 if (-not $authToken) {
     $authToken = [guid]::NewGuid().ToString('N')
     $config | Add-Member -NotePropertyName ServerToken -NotePropertyValue $authToken -Force
-    $config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
+    $config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
 }
 
 if (!(Test-Path $config.YtDlpPath)) { Write-Log "FATAL: yt-dlp not found at $($config.YtDlpPath)"; exit 1 }
@@ -1996,6 +2068,44 @@ function Invoke-PostProcess {
     Write-Log "[$($Download.id)] Post-processing complete: $destination"
 }
 
+function Start-AudioFallback {
+    param($Download)
+    $fallback = if ($Download.fallbackFormat) { ("$($Download.fallbackFormat)").ToLowerInvariant() } else { $null }
+    if (-not $Download.audioOnly -or $Download.fallbackAttempted -or @('mp3','m4a','opus','flac','wav') -notcontains $fallback) { return $false }
+    $Download.fallbackAttempted = $true
+    foreach ($oldFile in @($Download.progressFile, (Join-Path $env:TEMP "mdl_stderr_$($Download.id).txt"))) {
+        if ($oldFile -and (Test-Path -LiteralPath $oldFile)) { Remove-Item -LiteralPath $oldFile -Force -ErrorAction SilentlyContinue }
+    }
+    $progressFile = Join-Path $env:TEMP "mdl_progress_$($Download.id)_fallback.txt"
+    "" | Set-Content $progressFile -Force
+    $outDir = if ($Download.outputDir -and (Test-Path -LiteralPath $Download.outputDir)) { $Download.outputDir } else { $config.DownloadPath }
+    $outTpl = Join-Path $outDir "%(title)s.$fallback"
+    $ffLoc = Split-Path $config.FfmpegPath -Parent
+    $args = @('-f','bestaudio','--extract-audio','--audio-format',$fallback,'--audio-quality','0','--newline','--progress','--no-colors','--ffmpeg-location',$ffLoc,'-o',$outTpl)
+    $args += '--progress-template'; $args += 'download:MDLP %(progress._percent_str)s %(progress._speed_str)s %(progress._eta_str)s'
+    if ($config.ConcurrentFragments -gt 0) { $args += '--concurrent-fragments'; $args += "$($config.ConcurrentFragments)" }
+    if ($config.EmbedMetadata -eq $true) { $args += '--embed-metadata' }
+    if ($config.DownloadArchive -eq $true) { $args += '--download-archive'; $args += $archivePath }
+    if ($config.Proxy -and $config.Proxy -match '^(socks[45]|https?):') { $args += '--proxy'; $args += $config.Proxy }
+    if ($Download.referer) { $args += '--referer'; $args += $Download.referer }
+    $args += $Download.url
+    try {
+        $Download.process = Start-Process -FilePath $config.YtDlpPath -ArgumentList $args -NoNewWindow -PassThru `
+            -RedirectStandardOutput $progressFile -RedirectStandardError (Join-Path $env:TEMP "mdl_stderr_$($Download.id).txt")
+        $Download.progressFile = $progressFile
+        $Download.format = $fallback
+        $Download.status = 'downloading'
+        $Download.progress = 0
+        $Download.speed = ''; $Download.eta = ''; $Download.filename = ''
+        Save-QueueRecord $Download
+        Write-Log "[$($Download.id)] Primary audio format failed; retrying with $fallback"
+        return $true
+    } catch {
+        Write-Log "[$($Download.id)] Audio fallback could not start: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 $downloads = @{}
 $nextId = 0
 
@@ -2128,6 +2238,22 @@ function Restore-QueueEntries {
 function Get-SiteKey {
     param([string]$Url)
     try { return ([uri]$Url).Host.ToLowerInvariant() } catch { return 'unknown' }
+}
+
+function Get-SiteFormatPreset {
+    param([string]$Site)
+    if (-not $config.SitePresets -or -not $Site) { return $null }
+    $siteKey = ("$Site").Trim().ToLowerInvariant() -replace '^www\.', ''
+    $properties = if ($config.SitePresets -is [System.Collections.IDictionary]) {
+        @($config.SitePresets.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Name = "$($_.Key)"; Value = $_.Value } })
+    } else {
+        @($config.SitePresets.PSObject.Properties | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Value = $_.Value } })
+    }
+    foreach ($property in $properties) {
+        $presetKey = ("$($property.Name)").Trim().ToLowerInvariant() -replace '^www\.', ''
+        if ($siteKey -eq $presetKey -or $siteKey.EndsWith(".$presetKey")) { return $property.Value }
+    }
+    return $null
 }
 
 function Get-ActiveSiteCount {
@@ -2493,8 +2619,14 @@ function Start-Download {
     $allowedAudioFmt = @('mp3','m4a','opus','flac','wav')
     $allowedQuality = @('best','2160','1440','1080','720','480')
 
-    $reqFormat = if ($params.format) { $params.format.ToLower() } else { $null }
-    $reqQuality = if ($params.quality) { $params.quality.ToLower() } else { 'best' }
+    $siteKey = if ($params.site) { ("$($params.site)").Trim().ToLowerInvariant() } else { Get-SiteKey $url }
+    $sitePreset = Get-SiteFormatPreset $siteKey
+    $presetFormat = if ($sitePreset -and $sitePreset.format) { ("$($sitePreset.format)").ToLowerInvariant() } else { $null }
+    $presetQuality = if ($sitePreset -and $sitePreset.quality) { ("$($sitePreset.quality)").ToLowerInvariant() } else { $null }
+    $presetCodec = if ($sitePreset -and $sitePreset.codec) { ("$($sitePreset.codec)").ToLowerInvariant() } else { 'auto' }
+    $presetFallback = if ($sitePreset -and $sitePreset.fallbackFormat) { ("$($sitePreset.fallbackFormat)").ToLowerInvariant() } else { $null }
+    $reqFormat = if ($params.format) { ("$($params.format)").ToLowerInvariant() } elseif ($presetFormat) { $presetFormat } else { $null }
+    $reqQuality = if ($params.quality) { ("$($params.quality)").ToLowerInvariant() } elseif ($presetQuality) { $presetQuality } else { 'best' }
 
     if ($audioOnly) {
         $format = if ($reqFormat -and $allowedAudioFmt -contains $reqFormat) { $reqFormat } else { 'mp3' }
@@ -2502,6 +2634,8 @@ function Start-Download {
         $format = if ($reqFormat -and $allowedVideoFmt -contains $reqFormat) { $reqFormat } else { 'mp4' }
     }
     $quality = if ($allowedQuality -contains $reqQuality) { $reqQuality } else { 'best' }
+    $codec = if (-not $audioOnly -and @('av01','vp9','h264','hevc') -contains $presetCodec) { $presetCodec } else { 'auto' }
+    $fallbackFormat = if ($audioOnly -and $allowedAudioFmt -contains $presetFallback -and $presetFallback -ne $format) { $presetFallback } else { $null }
 
     # Output directory — use client override if provided and valid, else config default
     # Use separate audio dir if configured
@@ -2535,10 +2669,19 @@ function Start-Download {
     }
 
     # Build quality format selector for yt-dlp
+    $videoSelector = switch ($codec) {
+        'av01' { 'bestvideo[vcodec^=av01]' }
+        'vp9'  { 'bestvideo[vcodec^=vp9]' }
+        'h264' { 'bestvideo[vcodec^=avc1]' }
+        'hevc' { 'bestvideo[vcodec^=hev1]' }
+        default { 'bestvideo' }
+    }
     if ($quality -eq 'best') {
-        $fmtSel = "bestvideo+bestaudio/best"
+        $fmtSel = if ($codec -eq 'auto') { 'bestvideo+bestaudio/best' } else { "$videoSelector+bestaudio/bestvideo+bestaudio/best" }
     } else {
-        $fmtSel = "bestvideo[height<=$quality]+bestaudio/best[height<=$quality]/best"
+        $heightSelector = "$videoSelector[height<=$quality]"
+        $fallbackHeight = "bestvideo[height<=$quality]"
+        $fmtSel = if ($codec -eq 'auto') { "$fallbackHeight+bestaudio/best[height<=$quality]/best" } else { "$heightSelector+bestaudio/$fallbackHeight+bestaudio/best[height<=$quality]/best" }
     }
 
     Write-Log "[$id] Starting: url=$($url.Substring(0, [Math]::Min(80, $url.Length)))... audio=$audioOnly recordFromNow=$recordFromNow format=$format quality=$quality dir=$outDir"
@@ -2654,7 +2797,7 @@ if (Test-Path '$($tempVideo -replace "'","''")') {
         id = $id; url = $url; title = if ($title) { $title } else { "Unknown" }
         audioOnly = $audioOnly; status = "downloading"; progress = 0
         speed = ""; eta = ""; process = $proc; progressFile = $progressFile
-        startTime = (Get-Date); filename = ""; format = $format; quality = $quality
+        startTime = (Get-Date); filename = ""; format = $format; quality = $quality; site = $siteKey; formatPreset = $siteKey; codec = $codec; fallbackFormat = $fallbackFormat; fallbackAttempted = $false
         splitChapters = $splitChapters; recordFromNow = $recordFromNow; priority = (Get-NextQueuePriority)
         contentKey = $identity.key; videoId = $identity.videoId; channelId = $identity.channelId; sourceUrl = $identity.sourceUrl
         referer = $referer; outputDir = $outDir
@@ -2738,6 +2881,7 @@ function Update-Downloads {
                     duration = [math]::Round(((Get-Date) - $dl.startTime).TotalSeconds)
                 }
             } else {
+                if (Start-AudioFallback $dl) { continue }
                 $dl.status = "failed"
                 $errFile = Join-Path $env:TEMP "mdl_stderr_$id.txt"
                 $errMsg = if (Test-Path $errFile) { (Read-FileTail $errFile 2048) } else { "" }
@@ -2873,6 +3017,7 @@ while ($listener.IsListening) {
                         musicFolder = $config.MusicFolder
                         postProcessAudio = $config.PostProcessAudio
                         postProcessMusicBrainz = $config.PostProcessMusicBrainz
+                        sitePresets = $config.SitePresets
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
@@ -2933,6 +3078,10 @@ while ($listener.IsListening) {
                         $v = [int]$cfgUpdate.concurrentFragments
                         if ($v -ge 1 -and $v -le 32) { $config.ConcurrentFragments = $v }
                     }
+                    if ($cfgUpdate.PSObject.Properties.Name -contains 'sitePresets') {
+                        if ($cfgUpdate.sitePresets -is [array]) { New-JsonResponse $context @{ error = "sitePresets must be a JSON object" } 400; break }
+                        $config.SitePresets = $cfgUpdate.sitePresets
+                    }
                     if ($cfgUpdate.PSObject.Properties.Name -contains 'bandwidthLimitKbps') {
                         $v = [int]$cfgUpdate.bandwidthLimitKbps
                         if ($v -ge 0 -and $v -le 10000) { $config.BandwidthLimitKbps = $v }
@@ -2941,7 +3090,7 @@ while ($listener.IsListening) {
                         $v = [int]$cfgUpdate.siteConcurrencyCap
                         if ($v -ge 1 -and $v -le 8) { $config.SiteConcurrencyCap = $v }
                     }
-                    $config | ConvertTo-Json -Depth 3 | Set-Content $configPath -Encoding UTF8
+                    $config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
                     Write-Log "Config updated"
                     New-JsonResponse $context @{ updated = $true }
                 }

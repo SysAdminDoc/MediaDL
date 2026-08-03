@@ -18,6 +18,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Priority persistence and migration in the SQLite queue journal.
 - Added: Site/video/channel content identity deduplication across userscript, server, and protocol-handler paths.
 - Added: Opt-in post-processing to extract MP3 audio, tag it with MusicBrainz, and move it to the configured Music folder.
+- Added: Editable per-site format presets with codec selection, SoundCloud audio fallback, and a floating-pill quality picker for 720p, 1080p, and 4K requests.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

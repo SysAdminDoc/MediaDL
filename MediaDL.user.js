@@ -240,6 +240,20 @@
         .mdl-pill-btn.video { background: linear-gradient(135deg, #00b894, #00a085); color: white; }
         .mdl-pill-btn.audio { background: linear-gradient(135deg, #6c5ce7, #5b4cdb); color: white; }
         .mdl-pill-btn.record { background: linear-gradient(135deg, #ef4444, #c81e1e); color: white; font-size: 9px; font-weight: 700; }
+        .mdl-quality-wrap { position: relative; display: flex; }
+        .mdl-pill-btn.quality { background: linear-gradient(135deg, #0984e3, #0759a5); color: white; font-size: 10px; font-weight: 700; }
+        .mdl-quality-menu {
+            position: absolute; bottom: calc(100% + 6px); left: 0; display: none;
+            grid-template-columns: repeat(2, minmax(52px, 1fr)); gap: 4px;
+            padding: 5px; border-radius: 7px; background: rgba(0,0,0,0.94);
+            box-shadow: 0 3px 14px rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.14);
+        }
+        .mdl-quality-menu.open { display: grid; }
+        .mdl-quality-menu button {
+            border: none; border-radius: 4px; padding: 5px 7px; color: white;
+            background: rgba(255,255,255,0.12); cursor: pointer; font: 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .mdl-quality-menu button:hover { background: #00b894; }
         .mdl-pill-label {
             font-size: 10px; color: rgba(255,255,255,0.6); padding: 0 4px;
             max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -330,14 +344,16 @@
         return false;
     }
 
-    async function serverDownload(url, title, audioOnly, referer, recordFromNow, identity) {
+    async function serverDownload(url, title, audioOnly, referer, recordFromNow, identity, options = {}) {
         try {
             const r = await serverRequest('POST', '/download', {
                 url, title, audioOnly: !!audioOnly, referer: referer || null,
                 recordFromNow: !!recordFromNow,
                 site: identity?.site || null,
                 videoId: identity?.videoId || null,
-                channelId: identity?.channelId || null
+                channelId: identity?.channelId || null,
+                format: options?.format || null,
+                quality: options?.quality || null
             });
             if (r && r.id) {
                 console.log(`MediaDL: Server download started: ${r.id}`);
@@ -567,7 +583,7 @@
     // Tier 2: Protocol Handler (fire-and-forget, needs handler installed)
     // Tier 3: GM_download (direct CDN URLs only, no yt-dlp needed)
     // =========================================================================
-    async function triggerDownload(action, url) {
+    async function triggerDownload(action, url, options = {}) {
         if (!url) { showToast('No media URL found', 'error'); return; }
         url = resolveDownloadUrl(url);
 
@@ -586,7 +602,7 @@
         // --- TIER 1: HTTP Server ---
         if (serverAlive) {
             showToast(`Starting ${action} download via server...`, 'info', 1500);
-            const ok = await serverDownload(url, title, audioOnly, referer, recordFromNow, identity);
+            const ok = await serverDownload(url, title, audioOnly, referer, recordFromNow, identity, options);
             if (ok) return;
             console.log('MediaDL: Server download failed, trying protocol handler...');
         }
@@ -596,6 +612,8 @@
         let params = '';
         if (audioOnly) params += 'ytyt_audio_only=1&';
         if (recordFromNow) params += 'ytyt_record_from_now=1&';
+        if (options?.format) params += `ytyt_format=${encodeURIComponent(options.format)}&`;
+        if (options?.quality) params += `ytyt_quality=${encodeURIComponent(options.quality)}&`;
         if (identity?.site) params += `ytyt_site=${encodeURIComponent(identity.site)}&`;
         if (identity?.videoId) params += `ytyt_video_id=${encodeURIComponent(identity.videoId)}&`;
         if (identity?.channelId) params += `ytyt_channel_id=${encodeURIComponent(identity.channelId)}&`;
@@ -713,6 +731,48 @@
             dlBtn.innerHTML = ICONS.dl;
             dlBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); triggerDownload('video', url); });
             pill.appendChild(dlBtn);
+
+            const qualityWrap = document.createElement('div');
+            qualityWrap.className = 'mdl-quality-wrap';
+            const qualityBtn = document.createElement('button');
+            qualityBtn.className = 'mdl-pill-btn quality';
+            qualityBtn.title = 'Click or hold to choose video quality';
+            qualityBtn.textContent = 'Q';
+            const qualityMenu = document.createElement('div');
+            qualityMenu.className = 'mdl-quality-menu';
+            [['best', 'Best'], ['720', '720p'], ['1080', '1080p'], ['2160', '4K']].forEach(([value, caption]) => {
+                const choice = document.createElement('button');
+                choice.type = 'button';
+                choice.textContent = caption;
+                choice.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    qualityMenu.classList.remove('open');
+                    triggerDownload('video', url, { quality: value });
+                });
+                qualityMenu.appendChild(choice);
+            });
+            let holdTimer = null;
+            let openedByHold = false;
+            const cancelHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+            qualityBtn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                holdTimer = setTimeout(() => {
+                    openedByHold = true;
+                    toggleQualityMenu(qualityMenu);
+                }, 320);
+            });
+            qualityBtn.addEventListener('pointerup', cancelHold);
+            qualityBtn.addEventListener('pointercancel', cancelHold);
+            qualityBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                cancelHold();
+                if (openedByHold) { openedByHold = false; return; }
+                toggleQualityMenu(qualityMenu);
+            });
+            qualityWrap.append(qualityBtn, qualityMenu);
+            pill.appendChild(qualityWrap);
         }
 
         const mp3Btn = document.createElement('button');
@@ -743,6 +803,12 @@
         }
 
         return pill;
+    }
+
+    function toggleQualityMenu(menu) {
+        const shouldOpen = !menu.classList.contains('open');
+        document.querySelectorAll('.mdl-quality-menu.open').forEach((openMenu) => openMenu.classList.remove('open'));
+        if (shouldOpen) menu.classList.add('open');
     }
 
     function registerPill(anchorEl, url, label, color, audioOnly, recordable) {
