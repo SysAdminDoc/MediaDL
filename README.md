@@ -272,6 +272,7 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 |:--|:--|:--:|:--|
 | `GET` | `/health` | — | Server status. Returns auth token when `X-MDL-Client: MediaDL` header is present |
 | `GET` | `/ui` | — | Local queue viewer with drag handles and download controls |
+| `GET` | `/plugins` | 🔐 | Loaded extractor plugin names, versions, and directory |
 | `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer, format, quality}`. Returns `{id}` |
 | `GET` | `/status/:id` | 🔐 | `{status, progress, speed, eta, filename}` |
 | `GET` | `/queue` | 🔐 | Priority-ordered array of downloads with status and site |
@@ -284,6 +285,25 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 <sub>🔐 = Requires <code>X-Auth-Token</code> header (auto-negotiated by the userscript)</sub>
 
 The same local control surface is available on the `\\.\pipe\MediaDL` named pipe to avoid TCP port collisions. Send one newline-delimited JSON request such as `{"method":"GET","path":"/health","headers":{"X-MDL-Client":"MediaDL"}}`; the response is `{"status":200,"body":...}`. Pipe requests support health, download, status, queue, pause, resume, cancel, and shutdown operations and use the same auth token.
+
+</details>
+
+<details>
+<summary><h3>🧩 Extractor Plugins</h3></summary>
+<br>
+
+Drop a trusted `.ps1` file in `%LOCALAPPDATA%\MediaDL\plugins`. It registers a handler with `Register-MediaDLPlugin`; `CanHandle` receives the original page URL and `Extract` returns an absolute media URL plus optional metadata. Plugins are loaded at server start, limited to 256 KiB each, and can be inspected through the authenticated `/plugins` endpoint.
+
+```powershell
+Register-MediaDLPlugin -Name 'ExampleCdn' -Version '1.0' `
+    -CanHandle { param($url) $url -match '^https://example\.com/video/' } `
+    -Extract {
+        param($url, $context)
+        @{ url = $url -replace '/video/', '/media/'; title = $context.title }
+    }
+```
+
+The server passes the resolved URL through the normal queue, duplicate, format, subtitle, post-processing, and notification paths. Plugin scripts are local code and therefore run with the server user's permissions.
 
 </details>
 
@@ -300,6 +320,7 @@ The same local control surface is available on the `\\.\pipe\MediaDL` named pipe
 | `ytdl-server-launcher.vbs` | Windowless server launcher |
 | `ytdl-launcher.vbs` | Silent handler launcher |
 | `config.json` | Paths, server port/token, preferences |
+| `%LOCALAPPDATA%\MediaDL\plugins\*.ps1` | Optional trusted extractor plugins |
 
 <br>
 

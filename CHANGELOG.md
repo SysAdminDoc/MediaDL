@@ -26,6 +26,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Authenticated newline-delimited JSON named-pipe transport alongside the localhost HTTP server.
 - Added: Opt-in native Windows completion toasts from the background server with fail-safe WinRT handling.
 - Added: Daily yt-dlp and ffmpeg updates with GitHub release asset origin and SHA-256 digest verification.
+- Added: Trusted local extractor plugin SDK with registration, load limits, `/plugins` discovery, and normal queue integration.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

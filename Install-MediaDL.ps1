@@ -1083,6 +1083,7 @@ $btnNext.Add_Click({
                         HardwareEncoder = 'none'
                         NamedPipeName = 'MediaDL'
                         ToastNotifications = $true
+                        PluginDirectory = (Join-Path $env:LOCALAPPDATA 'MediaDL\plugins')
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1983,6 +1984,7 @@ $configDefaults = @{
     HardwareEncoder = 'none'
     NamedPipeName = 'MediaDL'
     ToastNotifications = $true
+    PluginDirectory = (Join-Path $env:LOCALAPPDATA 'MediaDL\plugins')
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -2465,6 +2467,83 @@ function Get-SiteFormatPreset {
     return $null
 }
 
+$script:MediaDLPlugins = @{}
+$script:MediaDLPluginDirectory = $null
+$script:MediaDLPluginLoadingPath = $null
+
+function Register-MediaDLPlugin {
+    param([string]$Name, [scriptblock]$CanHandle, [scriptblock]$Extract, [string]$Version = '1.0')
+    $cleanName = "$Name".Trim()
+    if ($cleanName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw 'Plugin name must be 1-64 safe characters' }
+    if (-not $CanHandle -or -not $Extract) { throw 'Plugin requires CanHandle and Extract scriptblocks' }
+    if ("$Version".Length -gt 32) { throw 'Plugin version is too long' }
+    if ($script:MediaDLPlugins.ContainsKey($cleanName)) { throw "Plugin already registered: $cleanName" }
+    $script:MediaDLPlugins[$cleanName] = [pscustomobject]@{
+        Name = $cleanName; Version = if ($Version) { "$Version" } else { '1.0' }
+        CanHandle = $CanHandle; Extract = $Extract; Path = $script:MediaDLPluginLoadingPath
+    }
+}
+
+function Get-MediaDLPluginSummary {
+    return @($script:MediaDLPlugins.Values | Sort-Object Name | ForEach-Object {
+        @{ name=$_.Name; version=$_.Version }
+    })
+}
+
+function Import-MediaDLPlugins {
+    $root = if ($config.PluginDirectory) { "$($config.PluginDirectory)" } else { Join-Path $env:LOCALAPPDATA 'MediaDL\plugins' }
+    if ($root -notmatch '^[A-Za-z]:\\' -or $root -match '\.\.') { $root = Join-Path $env:LOCALAPPDATA 'MediaDL\plugins' }
+    $script:MediaDLPluginDirectory = $root
+    try { if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null } } catch { Write-Log "Plugin directory unavailable: $($_.Exception.Message)"; return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.ps1' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        if ($file.Length -gt 262144) { Write-Log "Plugin skipped (over 256 KiB): $($file.Name)"; continue }
+        $script:MediaDLPluginLoadingPath = $file.FullName
+        try {
+            & $file.FullName
+            if (-not @($script:MediaDLPlugins.Values | Where-Object { $_.Path -eq $file.FullName }).Count) { Write-Log "Plugin did not register an extractor: $($file.Name)" }
+            else { Write-Log "Loaded plugin: $($file.Name)" }
+        } catch {
+            foreach ($key in @($script:MediaDLPlugins.Keys)) { if ($script:MediaDLPlugins[$key].Path -eq $file.FullName) { $script:MediaDLPlugins.Remove($key) } }
+            Write-Log "Plugin failed to load ($($file.Name)): $($_.Exception.Message)"
+        } finally { $script:MediaDLPluginLoadingPath = $null }
+    }
+}
+
+function Invoke-MediaDLPlugin {
+    param($Params)
+    if (-not $Params -or -not $Params.url) { return $Params }
+    $originalUrl = "$($Params.url)"
+    foreach ($plugin in @($script:MediaDLPlugins.Values | Sort-Object Name)) {
+        try {
+            $canHandle = $plugin.CanHandle
+            if (-not [bool](& $canHandle $originalUrl)) { continue }
+            $extract = $plugin.Extract
+            $result = & $extract $originalUrl @{ sourceUrl=$Params.sourceUrl; title=$Params.title; site=$Params.site; audioOnly=($Params.audioOnly -eq $true) }
+            if ($result -is [array]) { $result = @($result) | Select-Object -First 1 }
+            if ($result -is [string]) { $result = @{ url = $result } }
+            if (-not $result) { throw 'Extractor returned no result' }
+            $values = @{}
+            if ($result -is [System.Collections.IDictionary]) { foreach ($entry in $result.GetEnumerator()) { $values["$($entry.Key)"] = $entry.Value } }
+            else { foreach ($property in $result.PSObject.Properties) { $values[$property.Name] = $property.Value } }
+            $resolvedUrl = "$($values['url'])".Trim()
+            if ($resolvedUrl -notmatch '^https?://') { throw 'Extractor must return an absolute http(s) URL' }
+            $allowed = @('url','title','site','videoId','channelId','sourceUrl','audioOnly','referer','format','quality','outputDir','splitChapters','recordFromNow')
+            foreach ($key in $allowed) {
+                if (-not $values.ContainsKey($key) -or $null -eq $values[$key]) { continue }
+                if ($Params -is [System.Collections.IDictionary]) { $Params[$key] = $values[$key] }
+                elseif ($Params.PSObject.Properties.Name -contains $key) { $Params.$key = $values[$key] }
+                else { $Params | Add-Member -NotePropertyName $key -NotePropertyValue $values[$key] -Force }
+            }
+            if (-not $values.ContainsKey('sourceUrl') -or -not $values['sourceUrl']) {
+                if ($Params -is [System.Collections.IDictionary]) { $Params.sourceUrl = $originalUrl } else { $Params | Add-Member -NotePropertyName sourceUrl -NotePropertyValue $originalUrl -Force }
+            }
+            Write-Log "Plugin $($plugin.Name) resolved media URL for $originalUrl"
+            return $Params
+        } catch { throw "Plugin $($plugin.Name) failed: $($_.Exception.Message)" }
+    }
+    return $Params
+}
+
 function Get-ActiveSiteCount {
     param([string]$Site)
     @($downloads.Values | Where-Object {
@@ -2689,11 +2768,17 @@ function Invoke-PipeRequest {
             if ((Get-PipeHeader $pipeRequest.headers 'X-MDL-Client') -eq 'MediaDL') { $body.token = $authToken }
             return (Convert-PipeResult $body)
         }
+        '^/plugins$' {
+            if ($method -ne 'GET') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
+            $plugins = @(Get-MediaDLPluginSummary)
+            return (Convert-PipeResult @{ plugins = $plugins; count = $plugins.Count; directory = $script:MediaDLPluginDirectory })
+        }
         '^/download$' {
             if ($method -ne 'POST') { return (Convert-PipeResult @{ error = 'Method not allowed' } 405) }
             $params = $pipeRequest.body
             if ($params -is [string]) { try { $params = $params | ConvertFrom-Json } catch { return (Convert-PipeResult @{ error = 'Invalid body' } 400) } }
             if (-not $params -or -not $params.url) { return (Convert-PipeResult @{ error = 'Missing url' } 400) }
+            try { $params = Invoke-MediaDLPlugin $params } catch { return (Convert-PipeResult @{ error = 'Plugin extractor failed'; detail = "$($_.Exception.Message)" } 422) }
             $identity = Get-DownloadIdentity -Url $params.url -SourceUrl $params.sourceUrl -VideoId $params.videoId -ChannelId $params.channelId -Site $params.site -AudioOnly ($params.audioOnly -eq $true)
             $duplicate = Find-QueueDuplicate $identity.key
             if ($duplicate) { return (Convert-PipeResult @{ error = 'Duplicate download'; duplicateId = $duplicate.id; contentKey = $identity.key; title = $duplicate.title } 409) }
@@ -3308,6 +3393,7 @@ function Clean-OldDownloads {
     }
 }
 
+Import-MediaDLPlugins
 Initialize-QueueDb
 Restore-QueueEntries
 
@@ -3371,6 +3457,11 @@ while ($listener.IsListening) {
                 }
                 New-JsonResponse $context $resp
             }
+            '^/plugins$' {
+                if ($method -ne 'GET') { New-JsonResponse $context @{ error = "Method not allowed" } 405; break }
+                $plugins = @(Get-MediaDLPluginSummary)
+                New-JsonResponse $context @{ plugins = $plugins; count = $plugins.Count; directory = $script:MediaDLPluginDirectory }
+            }
             '^/download$' {
                 if ($method -ne 'POST') {
                     New-JsonResponse $context @{ error = "Method not allowed" } 405
@@ -3380,6 +3471,7 @@ while ($listener.IsListening) {
                 if (-not $body) { New-JsonResponse $context @{ error = "Empty body" } 400; break }
                 try { $params = $body | ConvertFrom-Json } catch { New-JsonResponse $context @{ error = "Invalid JSON" } 400; break }
                 if (-not $params.url) { New-JsonResponse $context @{ error = "Missing url" } 400; break }
+                try { $params = Invoke-MediaDLPlugin $params } catch { New-JsonResponse $context @{ error = "Plugin extractor failed"; detail = "$($_.Exception.Message)" } 422; break }
 
                 $identity = Get-DownloadIdentity -Url $params.url -SourceUrl $params.sourceUrl -VideoId $params.videoId -ChannelId $params.channelId -Site $params.site -AudioOnly ($params.audioOnly -eq $true)
                 $duplicate = Find-QueueDuplicate $identity.key
@@ -3423,6 +3515,7 @@ while ($listener.IsListening) {
                         hardwareEncoder = $config.HardwareEncoder
                         namedPipeName = $config.NamedPipeName
                         toastNotifications = $config.ToastNotifications
+                        pluginDirectory = $script:MediaDLPluginDirectory
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
