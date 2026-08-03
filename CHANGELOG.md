@@ -17,6 +17,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Local `/ui` queue viewer with drag-handle priority reordering and download controls.
 - Added: Priority persistence and migration in the SQLite queue journal.
 - Added: Site/video/channel content identity deduplication across userscript, server, and protocol-handler paths.
+- Added: Opt-in post-processing to extract MP3 audio, tag it with MusicBrainz, and move it to the configured Music folder.
 
 ## [v4.0.0] - %Y->- (HEAD -> main, origin/main, origin/HEAD)
 

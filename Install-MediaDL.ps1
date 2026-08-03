@@ -1023,6 +1023,9 @@ $btnNext.Add_Click({
                         Notifications = $chkNotifications.IsChecked
                         SponsorBlock = $true
                         SplitChapters = $false
+                        PostProcessAudio = $false
+                        PostProcessMusicBrainz = $false
+                        MusicFolder = (Join-Path $env:USERPROFILE "Music\MediaDL")
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1824,6 +1827,9 @@ $configDefaults = @{
     EmbedThumbnail = $true
     EmbedChapters = $true
     SplitChapters = $false
+    PostProcessAudio = $false
+    PostProcessMusicBrainz = $false
+    MusicFolder = (Join-Path $env:USERPROFILE "Music\MediaDL")
     EmbedSubs = $false
     SubLangs = "en"
     SponsorBlock = $false
@@ -1880,6 +1886,114 @@ function Save-HistoryEntry {
         if ($history.Count -gt 500) { $history = $history[-500..-1] }
         $history | ConvertTo-Json -Depth 3 -Compress | Set-Content $historyPath -Encoding UTF8
     } catch { Write-Log "History save error: $_" }
+}
+
+function Get-SafePostProcessName {
+    param([string]$Value)
+    $name = if ($Value) { [System.IO.Path]::GetFileNameWithoutExtension("$Value") } else { 'MediaDL' }
+    $name = ($name -replace '[<>:"/\\|?*]', '_') -replace '\s+', ' '
+    $name = $name.Trim(' ', '.')
+    if (-not $name) { $name = 'MediaDL' }
+    if ($name.Length -gt 120) { $name = $name.Substring(0,120).TrimEnd(' ', '.') }
+    return $name
+}
+
+function Get-UniquePostProcessPath {
+    param([string]$Directory, [string]$BaseName, [string]$Extension)
+    $candidate = Join-Path $Directory ("$BaseName$Extension")
+    $index = 1
+    while (Test-Path -LiteralPath $candidate) {
+        $candidate = Join-Path $Directory ("$BaseName ($index)$Extension")
+        $index++
+    }
+    return $candidate
+}
+
+function Get-PostProcessSource {
+    param($Download)
+    if ($Download.filename -and (Test-Path -LiteralPath $Download.filename -PathType Leaf)) {
+        return Get-Item -LiteralPath $Download.filename
+    }
+    if (-not $Download.outputDir -or -not (Test-Path -LiteralPath $Download.outputDir)) { return $null }
+    $since = (Get-Date).AddMinutes(-2)
+    return @(Get-ChildItem -LiteralPath $Download.outputDir -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $since -and $_.Extension -match '^\.(mp4|mkv|webm|mov|m4v|mp3|m4a|opus|flac|wav)$' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+}
+
+function Get-MusicBrainzTags {
+    param([string]$Title)
+    if (-not $Title) { return $null }
+    try {
+        $query = [uri]::EscapeDataString("recording:$Title")
+        $response = Invoke-RestMethod -Uri "https://musicbrainz.org/ws/2/recording/?query=$query&fmt=json&limit=1" -Headers @{ 'User-Agent' = 'MediaDL/5.0 (https://github.com/SysAdminDoc/MediaDL)' } -TimeoutSec 5 -ErrorAction Stop
+        $record = @($response.recordings) | Select-Object -First 1
+        if (-not $record) { return $null }
+        $artist = @($record.'artist-credit' | ForEach-Object { $_.name }) -join ', '
+        $release = @($record.releases) | Select-Object -First 1
+        return @{ title="$($record.title)"; artist="$artist"; album="$($release.title)"; date="$($release.date)"; recordingId="$($record.id)" }
+    } catch {
+        Write-Log "MusicBrainz lookup failed: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Set-PostProcessTags {
+    param([string]$Path, [hashtable]$Tags)
+    if (-not $Tags -or -not (Test-Path -LiteralPath $config.FfmpegPath)) { return $false }
+    $extension = [System.IO.Path]::GetExtension($Path)
+    $temp = "$Path.mdl_tags_$([guid]::NewGuid().ToString('N'))$extension"
+    $args = @('-hide_banner','-loglevel','error','-y','-i',$Path,'-map','0','-c','copy')
+    foreach ($tagName in @('title','artist','album','date','musicbrainz_recordingid')) {
+        $tagValue = $Tags[$tagName]
+        if (-not $tagValue -and $tagName -eq 'musicbrainz_recordingid') { $tagValue = $Tags.recordingId }
+        if ($tagValue) { $args += '-metadata'; $args += ("{0}={1}" -f $tagName,$tagValue) }
+    }
+    $args += $temp
+    try {
+        & $config.FfmpegPath @args 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $temp)) { return $false }
+        Move-Item -LiteralPath $temp -Destination $Path -Force
+        return $true
+    } catch {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+        Write-Log "Audio tagging failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Invoke-PostProcess {
+    param($Download)
+    if ($config.PostProcessAudio -ne $true -and $config.PostProcessMusicBrainz -ne $true) { return }
+    if (-not $config.MusicFolder) { Write-Log "Post-processing skipped: MusicFolder is empty"; return }
+    $source = Get-PostProcessSource $Download
+    if (-not $source) { Write-Log "[$($Download.id)] Post-processing skipped: output file not found"; return }
+    try { New-Item -ItemType Directory -Path $config.MusicFolder -Force | Out-Null } catch { Write-Log "Music folder unavailable: $($_.Exception.Message)"; return }
+    $audioPath = $null
+    if ($Download.audioOnly) {
+        $audioPath = $source.FullName
+    } else {
+        if (-not (Test-Path -LiteralPath $config.FfmpegPath)) { Write-Log "[$($Download.id)] Post-processing skipped: ffmpeg not found"; return }
+        $stagingName = Get-SafePostProcessName $Download.title
+        $stagingDirectory = if ($Download.outputDir -and (Test-Path -LiteralPath $Download.outputDir)) { $Download.outputDir } else { $config.MusicFolder }
+        $audioPath = Get-UniquePostProcessPath $stagingDirectory $stagingName '.mp3'
+        $extractArgs = @('-hide_banner','-loglevel','error','-y','-i',$source.FullName,'-vn','-map','0:a:0','-codec:a','libmp3lame','-q:a','2',$audioPath)
+        & $config.FfmpegPath @extractArgs 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $audioPath)) { Write-Log "[$($Download.id)] Audio extraction failed"; return }
+    }
+    $tags = $null
+    if ($config.PostProcessMusicBrainz -eq $true) {
+        $tags = Get-MusicBrainzTags $Download.title
+        if ($tags) { [void](Set-PostProcessTags $audioPath $tags) }
+    }
+    $base = if ($tags -and $tags.artist -and $tags.title) { Get-SafePostProcessName ("$($tags.artist) - $($tags.title)") } else { Get-SafePostProcessName $Download.title }
+    $destination = Get-UniquePostProcessPath $config.MusicFolder $base ([System.IO.Path]::GetExtension($audioPath))
+    if ([System.IO.Path]::GetFullPath($audioPath) -ne [System.IO.Path]::GetFullPath($destination)) {
+        Move-Item -LiteralPath $audioPath -Destination $destination -Force
+    }
+    $Download.filename = $destination
+    $Download.postProcessedPath = $destination
+    Write-Log "[$($Download.id)] Post-processing complete: $destination"
 }
 
 $downloads = @{}
@@ -2612,6 +2726,8 @@ function Update-Downloads {
             }
 
             if ($allOutput -match "100%|has already been downloaded|Merging formats into|DelayedMuxer|audio extraction complete") {
+                $dl.status = "post-processing"; Save-QueueRecord $dl
+                try { Invoke-PostProcess $dl } catch { Write-Log "[$id] Post-processing error: $($_.Exception.Message)" }
                 $dl.status = "complete"; $dl.progress = 100
                 Write-Log "[$id] Complete"
                 # Save to download history
@@ -2741,6 +2857,7 @@ while ($listener.IsListening) {
                 $ht = @{
                     url = $params.url; title = $params.title
                     audioOnly = $params.audioOnly; referer = $params.referer
+                    site = $params.site; videoId = $params.videoId; channelId = $params.channelId; sourceUrl = $params.sourceUrl
                     format = $params.format; quality = $params.quality
                     outputDir = $params.outputDir; splitChapters = $params.splitChapters
                     recordFromNow = $params.recordFromNow
@@ -2753,6 +2870,9 @@ while ($listener.IsListening) {
                     New-JsonResponse $context @{
                         downloadPath = $config.DownloadPath
                         audioDownloadPath = $config.AudioDownloadPath
+                        musicFolder = $config.MusicFolder
+                        postProcessAudio = $config.PostProcessAudio
+                        postProcessMusicBrainz = $config.PostProcessMusicBrainz
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
@@ -2778,8 +2898,12 @@ while ($listener.IsListening) {
                     if (-not $body) { New-JsonResponse $context @{ error = "Empty body" } 400; break }
                     try { $cfgUpdate = $body | ConvertFrom-Json } catch { New-JsonResponse $context @{ error = "Invalid JSON" } 400; break }
                     # Update path fields with validation
-                    foreach ($pathKey in @('downloadPath','audioDownloadPath')) {
-                        $propName = if ($pathKey -eq 'downloadPath') { 'DownloadPath' } else { 'AudioDownloadPath' }
+                    foreach ($pathKey in @('downloadPath','audioDownloadPath','musicFolder')) {
+                        $propName = switch ($pathKey) {
+                            'downloadPath' { 'DownloadPath' }
+                            'audioDownloadPath' { 'AudioDownloadPath' }
+                            default { 'MusicFolder' }
+                        }
                         if ($cfgUpdate.PSObject.Properties.Name -contains $pathKey) {
                             $newPath = "$($cfgUpdate.$pathKey)".Trim()
                             if ($newPath -eq '') { $config.$propName = ''; continue }
@@ -2792,7 +2916,7 @@ while ($listener.IsListening) {
                         }
                     }
                     # Update boolean/string fields
-                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','EmbedSubs','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
+                    $boolFields = @('EmbedMetadata','EmbedThumbnail','EmbedChapters','SplitChapters','PostProcessAudio','PostProcessMusicBrainz','EmbedSubs','SponsorBlock','DownloadArchive','AutoUpdateYtDlp')
                     foreach ($f in $boolFields) {
                         $camel = $f.Substring(0,1).ToLower() + $f.Substring(1)
                         if ($cfgUpdate.PSObject.Properties.Name -contains $camel) {

@@ -107,6 +107,7 @@ Lightweight HTTP server on `127.0.0.1:9751`. Concurrent downloads, progress trac
 Queue requests and interrupted states persist in a SQLite WAL journal at `%LOCALAPPDATA%\MediaDL\queue.db`.
 The settings panel also exposes a bandwidth slider and per-site concurrency cap to keep busy hosts fair.
 Open `http://127.0.0.1:9751/ui` for the local queue viewer, where drag handles persist priority order and active downloads can be paused, resumed, or cancelled.
+Optional post-processing extracts MP3 audio, looks up MusicBrainz tags, and moves the result into the configured Music folder.
 
 #### 🔑 Zero-Config Auth
 Server token negotiated automatically via `X-MDL-Client` header handshake. No manual setup.
@@ -150,6 +151,9 @@ YouTube via direct API. All other sites via `yt-dlp --get-thumbnail`. Both non-b
 
 #### ✂️ Chapter Splitting
 Enable chapter splitting in the server settings to emit one file per YouTube `Chapters:` section while preserving embedded chapter markers.
+
+#### 🎵 Music Post-Processing
+Enable the opt-in post-processing switches to extract audio after a video completes, tag it through MusicBrainz, and move it to a collision-safe Music folder filename.
 
 #### 📂 Open on Complete
 Click "Complete!" to open Explorer with the downloaded file pre-selected.
