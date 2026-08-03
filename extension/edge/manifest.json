@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "MediaDL for Edge",
+  "version": "4.0.0",
+  "description": "Universal media downloader with an Edge sidebar queue viewer.",
+  "permissions": ["storage", "downloads", "sidePanel"],
+  "host_permissions": ["*://*/*", "http://127.0.0.1:9751/*", "http://localhost:9751/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open MediaDL queue"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

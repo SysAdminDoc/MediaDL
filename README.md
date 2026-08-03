@@ -183,6 +183,10 @@ Self-update throttled to once per 24 hours via timestamp file.
 </tr>
 </table>
 
+### 🌍 Browser Variants
+
+The `extension/` directory contains unsigned MV3 packages for Chrome and Firefox, plus an Edge package with a native side-panel queue viewer. Run `node extension/build.mjs` after changing `MediaDL.user.js` to regenerate the shared content/background adapters. Firefox AMO submission/signing is intentionally not performed; load the unsigned package as a development extension.
+
 <br>
 
 ## 📸 Screenshots

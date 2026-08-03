@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "MediaDL",
+  "version": "4.0.0",
+  "description": "Universal media downloader backed by the local MediaDL server.",
+  "permissions": ["storage", "downloads"],
+  "host_permissions": ["*://*/*", "http://127.0.0.1:9751/*", "http://localhost:9751/*"],
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mediadl@sysadmindoc.local",
+      "strict_min_version": "109.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}
