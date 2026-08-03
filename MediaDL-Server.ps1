@@ -75,6 +75,7 @@ $configDefaults = @{
     }
     EmbedSubs = $false
     SubtitleSrt = $false
+    HardwareEncoder = 'none'
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -432,6 +433,14 @@ $xamlString = @"
                                 <TextBlock Text="Host keys support format, quality, codec (av01/vp9/h264/hevc), and fallbackFormat." FontSize="10" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                  <CheckBox x:Name="cfgEmbedSubs" Content="Embed subtitles"/>
                                  <CheckBox x:Name="cfgSubtitleSrt" Content="Download subtitles as SRT and mux into MKV"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock Text="Hardware transcode:" FontSize="11" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                    <ComboBox x:Name="cfgHardwareEncoder" Width="110" FontSize="11">
+                                        <ComboBoxItem Content="None"/>
+                                        <ComboBoxItem Content="NVENC"/>
+                                        <ComboBoxItem Content="QSV"/>
+                                    </ComboBox>
+                                </StackPanel>
                                  <StackPanel Orientation="Horizontal" Margin="20,4,0,0">
                                     <TextBlock Text="Languages:" FontSize="11" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                                     <TextBox x:Name="cfgSubLangs" Width="120" FontSize="11"/>
@@ -535,6 +544,7 @@ $cfgMusicFolder = $window.FindName("cfgMusicFolder")
 $cfgSitePresets = $window.FindName("cfgSitePresets")
 $cfgEmbedSubs = $window.FindName("cfgEmbedSubs")
 $cfgSubtitleSrt = $window.FindName("cfgSubtitleSrt")
+$cfgHardwareEncoder = $window.FindName("cfgHardwareEncoder")
 $cfgSubLangs = $window.FindName("cfgSubLangs")
 $cfgSponsorBlock = $window.FindName("cfgSponsorBlock")
 $cfgFragments = $window.FindName("cfgFragments")
@@ -566,6 +576,7 @@ function Load-SettingsUI {
     $cfgSitePresets.Text = if ($c.SitePresets) { $c.SitePresets | ConvertTo-Json -Compress } else { '{}' }
     $cfgEmbedSubs.IsChecked = $c.EmbedSubs -eq $true
     $cfgSubtitleSrt.IsChecked = $c.SubtitleSrt -eq $true
+    $cfgHardwareEncoder.SelectedIndex = switch (("$($c.HardwareEncoder)").ToLowerInvariant()) { 'nvenc' { 1 } 'qsv' { 2 } default { 0 } }
     $cfgSubLangs.Text = "$($c.SubLangs)"
     $cfgSponsorBlock.IsChecked = $c.SponsorBlock -eq $true
     $cfgFragments.Text = "$($c.ConcurrentFragments)"
@@ -1022,6 +1033,32 @@ VALUES (
                 Sort-Object LastWriteTime -Descending | Select-Object -First 1)
         }
 
+        function Invoke-HardwareTranscode {
+            param($Download)
+            if ($Download.audioOnly) { return $false }
+            $encoder = ("$($config.HardwareEncoder)").Trim().ToLowerInvariant()
+            if (@('nvenc','qsv') -notcontains $encoder) { return $false }
+            $source = Get-PostProcessSource $Download
+            if (-not $source) { Write-SLog "[$($Download.id)] Hardware transcode skipped: output file not found"; return $false }
+            if ($source.Extension -match '^\.webm$') { Write-SLog "[$($Download.id)] Hardware transcode skipped: WebM container cannot carry the selected H.264 stream"; return $false }
+            if (-not (Test-Path -LiteralPath $config.FfmpegPath)) { Write-SLog "[$($Download.id)] Hardware transcode skipped: ffmpeg not found"; return $false }
+            $codec = if ($encoder -eq 'nvenc') { 'h264_nvenc' } else { 'h264_qsv' }
+            $temp = "$($source.FullName).mdl_hw_$([guid]::NewGuid().ToString('N'))$($source.Extension)"
+            $args = @('-hide_banner','-loglevel','error','-y','-i',$source.FullName,'-map','0','-c:v',$codec,'-c:a','copy','-c:s','copy','-c:d','copy',$temp)
+            try {
+                & $config.FfmpegPath @args 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $temp)) { Write-SLog "[$($Download.id)] Hardware transcode failed ($encoder)"; return $false }
+                Move-Item -LiteralPath $temp -Destination $source.FullName -Force
+                $Download.filename = $source.FullName
+                Write-SLog "[$($Download.id)] Hardware transcode complete: $encoder"
+                return $true
+            } catch {
+                if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+                Write-SLog "[$($Download.id)] Hardware transcode error: $($_.Exception.Message)"
+                return $false
+            }
+        }
+
         function Get-MusicBrainzTags {
             param([string]$Title)
             if (-not $Title) { return $null }
@@ -1284,6 +1321,7 @@ VALUES (
                     $out = if (Test-Path $dl.progressFile) { Read-FileTail $dl.progressFile 8192 } else { "" }
                     if ($out -match "100%|has already been downloaded|Merging formats into|DelayedMuxer|audio extraction complete") {
                         $dl.status = "post-processing"; Save-QueueRecord $dl
+                        try { [void](Invoke-HardwareTranscode $dl) } catch { Write-SLog "[$id] Hardware transcode error: $($_.Exception.Message)" }
                         try { Invoke-PostProcess $dl } catch { Write-SLog "[$id] Post-processing error: $($_.Exception.Message)" }
                         $dl.status = "complete"; $dl.progress = 100; $state.TotalCompleted++
                         Write-SLog "[$id] Complete"
@@ -1614,7 +1652,7 @@ button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
                     }
                     '^/config$' {
                         if ($method -eq 'GET') {
-                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;musicFolder=$config.MusicFolder;postProcessAudio=$config.PostProcessAudio;postProcessMusicBrainz=$config.PostProcessMusicBrainz;sitePresets=$config.SitePresets;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subtitleSrt=$config.SubtitleSrt;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
+                            Send-Json $ctx @{downloadPath=$config.DownloadPath;audioDownloadPath=$config.AudioDownloadPath;musicFolder=$config.MusicFolder;postProcessAudio=$config.PostProcessAudio;postProcessMusicBrainz=$config.PostProcessMusicBrainz;sitePresets=$config.SitePresets;embedMetadata=$config.EmbedMetadata;embedThumbnail=$config.EmbedThumbnail;embedChapters=$config.EmbedChapters;splitChapters=$config.SplitChapters;embedSubs=$config.EmbedSubs;subtitleSrt=$config.SubtitleSrt;hardwareEncoder=$config.HardwareEncoder;subLangs=$config.SubLangs;sponsorBlock=$config.SponsorBlock;concurrentFragments=$config.ConcurrentFragments;bandwidthLimitKbps=$config.BandwidthLimitKbps;siteConcurrencyCap=$config.SiteConcurrencyCap;downloadArchive=$config.DownloadArchive;rateLimit=$config.RateLimit;proxy=$config.Proxy;videoFormats=@('mp4','mkv','webm');audioFormats=@('mp3','m4a','opus','flac','wav');qualities=@('best','2160','1440','1080','720','480')}
                         } else { Send-Json $ctx @{error="Use GUI settings"} 405 }
                     }
                     '^/pause/(.+)$' {
@@ -1774,6 +1812,7 @@ $btnSaveSettings.Add_Click({
     }
     $script:Config.EmbedSubs = $cfgEmbedSubs.IsChecked
     $script:Config.SubtitleSrt = $cfgSubtitleSrt.IsChecked
+    $script:Config.HardwareEncoder = @('none','nvenc','qsv')[[Math]::Max(0, [Math]::Min(2, [int]$cfgHardwareEncoder.SelectedIndex))]
     $script:Config.SubLangs = $cfgSubLangs.Text
     $script:Config.SponsorBlock = $cfgSponsorBlock.IsChecked
     $v = 0; if ([int]::TryParse($cfgFragments.Text, [ref]$v) -and $v -ge 1 -and $v -le 32) { $script:Config.ConcurrentFragments = $v }

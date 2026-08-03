@@ -162,6 +162,8 @@ Configure host presets in the server settings JSON. The built-in examples reques
 
 Subtitle control can optionally download manual and automatic captions as SRT and mux them into an MKV output.
 
+Hardware transcode is opt-in in the same settings panel: choose NVENC or QSV to re-encode completed video with FFmpeg while copying audio, subtitle, and data streams unchanged.
+
 #### 📂 Open on Complete
 Click "Complete!" to open Explorer with the downloaded file pre-selected.
 

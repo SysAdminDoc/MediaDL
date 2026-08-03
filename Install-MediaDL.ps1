@@ -1033,6 +1033,7 @@ $btnNext.Add_Click({
                             'soundcloud.com' = [ordered]@{ format = 'flac'; quality = 'best'; fallbackFormat = 'mp3' }
                         }
                         SubtitleSrt = $false
+                        HardwareEncoder = 'none'
                         BandwidthLimitKbps = 0
                         SiteConcurrencyCap = 1
                         YtDlpPath = $ytdlpPath
@@ -1085,6 +1086,29 @@ if (!(Test-Path $configPath)) {
 }
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 Write-Log "Config loaded. yt-dlp: $($config.YtDlpPath)"
+
+function Invoke-ProtocolHardwareTranscode {
+    param([string]$Path)
+    if ($audioOnly -or -not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    $encoder = ("$($config.HardwareEncoder)").Trim().ToLowerInvariant()
+    if (@('nvenc','qsv') -notcontains $encoder) { return $null }
+    $source = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $source -or $source.Extension -match '^\.webm$' -or -not (Test-Path -LiteralPath $config.FfmpegPath)) { return $null }
+    $codec = if ($encoder -eq 'nvenc') { 'h264_nvenc' } else { 'h264_qsv' }
+    $temp = "$($source.FullName).mdl_hw_$([guid]::NewGuid().ToString('N'))$($source.Extension)"
+    $args = @('-hide_banner','-loglevel','error','-y','-i',$source.FullName,'-map','0','-c:v',$codec,'-c:a','copy','-c:s','copy','-c:d','copy',$temp)
+    try {
+        & $config.FfmpegPath @args 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $temp)) { return $null }
+        Move-Item -LiteralPath $temp -Destination $source.FullName -Force
+        Write-Log "Hardware transcode complete: $encoder"
+        return $source.FullName
+    } catch {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+        Write-Log "Hardware transcode failed: $($_.Exception.Message)"
+        return $null
+    }
+}
 
 # Ensure download path exists
 if ($config.DownloadPath -and !(Test-Path $config.DownloadPath)) {
@@ -1719,6 +1743,10 @@ $timer.Add_Tick({
             $ok = $all -match "100%|has already been downloaded|Merging formats into|DelayedMuxer|audio extraction complete"
 
             if ($ok) {
+                if ($script:finalFile -and (Test-Path -LiteralPath $script:finalFile)) {
+                    $transcoded = Invoke-ProtocolHardwareTranscode $script:finalFile
+                    if ($transcoded) { $script:finalFile = $transcoded }
+                }
                 $script:targetPct = 100; $script:displayPct = 100
                 $pnlFill.Width = 90; $lblPct.Text = "100%"
                 $lblStatus.Text = "Complete!"; $lblStatus.ForeColor = [System.Drawing.Color]::LimeGreen
@@ -1911,6 +1939,7 @@ $configDefaults = @{
     }
     EmbedSubs = $false
     SubtitleSrt = $false
+    HardwareEncoder = 'none'
     SubLangs = "en"
     SponsorBlock = $false
     SponsorBlockAction = "remove"
@@ -1999,6 +2028,32 @@ function Get-PostProcessSource {
     return @(Get-ChildItem -LiteralPath $Download.outputDir -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -ge $since -and $_.Extension -match '^\.(mp4|mkv|webm|mov|m4v|mp3|m4a|opus|flac|wav)$' } |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+}
+
+function Invoke-HardwareTranscode {
+    param($Download)
+    if ($Download.audioOnly) { return $false }
+    $encoder = ("$($config.HardwareEncoder)").Trim().ToLowerInvariant()
+    if (@('nvenc','qsv') -notcontains $encoder) { return $false }
+    $source = Get-PostProcessSource $Download
+    if (-not $source) { Write-Log "[$($Download.id)] Hardware transcode skipped: output file not found"; return $false }
+    if ($source.Extension -match '^\.webm$') { Write-Log "[$($Download.id)] Hardware transcode skipped: WebM container cannot carry the selected H.264 stream"; return $false }
+    if (-not (Test-Path -LiteralPath $config.FfmpegPath)) { Write-Log "[$($Download.id)] Hardware transcode skipped: ffmpeg not found"; return $false }
+    $codec = if ($encoder -eq 'nvenc') { 'h264_nvenc' } else { 'h264_qsv' }
+    $temp = "$($source.FullName).mdl_hw_$([guid]::NewGuid().ToString('N'))$($source.Extension)"
+    $args = @('-hide_banner','-loglevel','error','-y','-i',$source.FullName,'-map','0','-c:v',$codec,'-c:a','copy','-c:s','copy','-c:d','copy',$temp)
+    try {
+        & $config.FfmpegPath @args 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $temp)) { Write-Log "[$($Download.id)] Hardware transcode failed ($encoder)"; return $false }
+        Move-Item -LiteralPath $temp -Destination $source.FullName -Force
+        $Download.filename = $source.FullName
+        Write-Log "[$($Download.id)] Hardware transcode complete: $encoder"
+        return $true
+    } catch {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+        Write-Log "[$($Download.id)] Hardware transcode error: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Get-MusicBrainzTags {
@@ -2887,6 +2942,7 @@ function Update-Downloads {
 
             if ($allOutput -match "100%|has already been downloaded|Merging formats into|DelayedMuxer|audio extraction complete") {
                 $dl.status = "post-processing"; Save-QueueRecord $dl
+                try { [void](Invoke-HardwareTranscode $dl) } catch { Write-Log "[$id] Hardware transcode error: $($_.Exception.Message)" }
                 try { Invoke-PostProcess $dl } catch { Write-Log "[$id] Post-processing error: $($_.Exception.Message)" }
                 $dl.status = "complete"; $dl.progress = 100
                 Write-Log "[$id] Complete"
@@ -3035,6 +3091,7 @@ while ($listener.IsListening) {
                         postProcessAudio = $config.PostProcessAudio
                         postProcessMusicBrainz = $config.PostProcessMusicBrainz
                         sitePresets = $config.SitePresets
+                        hardwareEncoder = $config.HardwareEncoder
                         videoFormats = @('mp4','mkv','webm')
                         audioFormats = @('mp3','m4a','opus','flac','wav')
                         qualities = @('best','2160','1440','1080','720','480')
@@ -3086,10 +3143,12 @@ while ($listener.IsListening) {
                             $config.$f = [bool]$cfgUpdate.$camel
                         }
                     }
-                    $strFields = @{SubLangs='subLangs';SponsorBlockAction='sponsorBlockAction';RateLimit='rateLimit';Proxy='proxy'}
+                    $strFields = @{SubLangs='subLangs';SponsorBlockAction='sponsorBlockAction';HardwareEncoder='hardwareEncoder';RateLimit='rateLimit';Proxy='proxy'}
                     foreach ($pair in $strFields.GetEnumerator()) {
                         if ($cfgUpdate.PSObject.Properties.Name -contains $pair.Value) {
-                            $config.($pair.Key) = "$($cfgUpdate.($pair.Value))"
+                            $value = "$($cfgUpdate.($pair.Value))"
+                            if ($pair.Key -eq 'HardwareEncoder' -and @('none','nvenc','qsv') -notcontains $value.ToLowerInvariant()) { continue }
+                            $config.($pair.Key) = if ($pair.Key -eq 'HardwareEncoder') { $value.ToLowerInvariant() } else { $value }
                         }
                     }
                     if ($cfgUpdate.PSObject.Properties.Name -contains 'concurrentFragments') {
