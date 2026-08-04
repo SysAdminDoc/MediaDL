@@ -833,6 +833,18 @@ VALUES (
             try { return ([uri]$Url).Host.ToLowerInvariant() } catch { return 'unknown' }
         }
 
+        function Test-IsCollectionUrl {
+            param([string]$Url, [bool]$Explicit = $false)
+            if ($Explicit) { return $true }
+            try { $uri = [uri]$Url } catch { return $false }
+            $query = $uri.Query
+            if ($query -match '(?:\?|&)list=[^&]+' -and $query -notmatch '(?:\?|&)v=') { return $true }
+            $urlHost = $uri.Host.ToLowerInvariant()
+            if ($urlHost -match '(^|\.)youtube\.com$' -and $uri.AbsolutePath -match '^/(?:channel/|c/|user/|@[^/]+/?$|playlist)') { return $true }
+            if ($urlHost -match '(^|\.)twitch\.tv$' -and $uri.AbsolutePath -match '/videos/?$') { return $true }
+            return $false
+        }
+
         function Get-SiteFormatPreset {
             param([string]$Site)
             if (-not $config.SitePresets -or -not $Site) { return $null }
@@ -1444,7 +1456,7 @@ namespace MediaDL {
             }
 
             $ffLoc = Split-Path $config.FfmpegPath -Parent
-            $isPlaylist = $url -match '[?&]list=' -and $url -notmatch '[?&]v='
+            $isPlaylist = Test-IsCollectionUrl -Url $url -Explicit:($params.channelMode -eq $true)
             $chapterSuffix = if ($splitChapters) { " - %(section_number)03d %(section_title)s" } else { "" }
             if ($isPlaylist) { $outTpl = Join-Path $outDir "%(playlist_title)s/%(title)s$chapterSuffix.$format" }
             else { $outTpl = Join-Path $outDir "%(title)s$chapterSuffix.$format" }

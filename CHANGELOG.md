@@ -27,6 +27,7 @@ All notable changes to MediaDL will be documented in this file.
 - Added: Opt-in native Windows completion toasts from the background server with fail-safe WinRT handling.
 - Added: Daily yt-dlp and ffmpeg updates with GitHub release asset origin and SHA-256 digest verification.
 - Added: Trusted local extractor plugin SDK with registration, load limits, `/plugins` discovery, and normal queue integration.
+- Added: Explicit channel and playlist collection detection with archive-backed resume, rate limiting, and collection-aware output folders.
 
 ## [v5.0.0] - 2026-08-03
 

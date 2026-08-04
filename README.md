@@ -100,6 +100,8 @@ HTTP server → protocol handler → GM_download. If one method fails, the next 
 
 Video pills include a click-or-hold quality picker for Best, 720p, 1080p, and 4K. The server also applies editable per-host presets for format, quality, codec, and audio fallback.
 
+Playlist and channel URLs are handled as collection downloads with one queue item, playlist-aware folders, the configured rate limit, and the download archive for resume-safe retries. API clients can force this behavior with `channelMode: true` in the `/download` body.
+
 </td>
 <td width="33%" valign="top">
 
@@ -273,7 +275,7 @@ The download server runs on `127.0.0.1:9751` (localhost only, not exposed to net
 | `GET` | `/health` | — | Server status. Returns auth token when `X-MDL-Client: MediaDL` header is present |
 | `GET` | `/ui` | — | Local queue viewer with drag handles and download controls |
 | `GET` | `/plugins` | 🔐 | Loaded extractor plugin names, versions, and directory |
-| `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer, format, quality}`. Returns `{id}` |
+| `POST` | `/download` | 🔐 | Start download. Body: `{url, title, audioOnly, referer, format, quality, channelMode}`. Returns `{id}` |
 | `GET` | `/status/:id` | 🔐 | `{status, progress, speed, eta, filename}` |
 | `GET` | `/queue` | 🔐 | Priority-ordered array of downloads with status and site |
 | `POST` | `/queue/reorder` | 🔐 | Persist priority order. Body: `{ids: [...]}` |

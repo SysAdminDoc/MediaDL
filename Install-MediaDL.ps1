@@ -2451,6 +2451,18 @@ function Get-SiteKey {
     try { return ([uri]$Url).Host.ToLowerInvariant() } catch { return 'unknown' }
 }
 
+function Test-IsCollectionUrl {
+    param([string]$Url, [bool]$Explicit = $false)
+    if ($Explicit) { return $true }
+    try { $uri = [uri]$Url } catch { return $false }
+    $query = $uri.Query
+    if ($query -match '(?:\?|&)list=[^&]+' -and $query -notmatch '(?:\?|&)v=') { return $true }
+    $urlHost = $uri.Host.ToLowerInvariant()
+    if ($urlHost -match '(^|\.)youtube\.com$' -and $uri.AbsolutePath -match '^/(?:channel/|c/|user/|@[^/]+/?$|playlist)') { return $true }
+    if ($urlHost -match '(^|\.)twitch\.tv$' -and $uri.AbsolutePath -match '/videos/?$') { return $true }
+    return $false
+}
+
 function Get-SiteFormatPreset {
     param([string]$Site)
     if (-not $config.SitePresets -or -not $Site) { return $null }
@@ -3128,7 +3140,7 @@ function Start-Download {
     $ffLoc = Split-Path $config.FfmpegPath -Parent
 
     # Build output template — playlist-aware
-    $isPlaylist = $url -match '[?&]list=' -and $url -notmatch '[?&]v='
+    $isPlaylist = Test-IsCollectionUrl -Url $url -Explicit:($params.channelMode -eq $true)
     if ($isDirect -and $title) {
         $safeName = $title -replace '[<>:"/\\|?*]', '_' -replace '_+', '_'
         $safeName = $safeName.Trim('_. ')
