@@ -274,7 +274,7 @@ $xamlString = @"
                 <!-- Logo -->
                 <StackPanel Grid.Row="0" Margin="16,20,16,24">
                     <TextBlock Text="MediaDL" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimary}"/>
-                    <TextBlock x:Name="lblVersion" Text="Server v5.0.0" FontSize="10" Foreground="{StaticResource TextMuted}" Margin="0,2,0,0"/>
+                    <TextBlock x:Name="lblVersion" Text="Server v5.1.0" FontSize="10" Foreground="{StaticResource TextMuted}" Margin="0,2,0,0"/>
                 </StackPanel>
 
                 <!-- Nav -->
@@ -1139,7 +1139,7 @@ namespace MediaDL {
             switch -Regex ($path) {
                 '^/health$' {
                     $active=@($state.Downloads.Values|Where-Object{$_.status -match 'downloading|merging|extracting'}).Count
-                    $body=@{status='ok';version='5.0.0';port=$PORT;pipe=$config.NamedPipeName;downloads=$active;token_required=$true}
+                    $body=@{status='ok';version='5.1.0';port=$PORT;pipe=$config.NamedPipeName;downloads=$active;token_required=$true}
                     if ((Get-PipeHeader $p.headers 'X-MDL-Client') -eq 'MediaDL') { $body.token=$state.Token }
                     return (Convert-PipeResult $body)
                 }
@@ -1911,7 +1911,7 @@ button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
                     '^/ui$' { Send-QueueUi $ctx }
                     '^/health$' {
                         $active = @($state.Downloads.Values | Where-Object { $_.status -match 'downloading|merging|extracting' }).Count
-                        $resp = @{status="ok";version="5.0.0";port=$PORT;downloads=$active;token_required=$true}
+                        $resp = @{status="ok";version="5.1.0";port=$PORT;downloads=$active;token_required=$true}
                         if ($ctx.Request.Headers["X-MDL-Client"] -eq "MediaDL") { $resp.token = $state.Token }
                         Send-Json $ctx $resp
                     }

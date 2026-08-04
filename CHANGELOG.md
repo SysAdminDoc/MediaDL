@@ -2,7 +2,7 @@
 
 All notable changes to MediaDL will be documented in this file.
 
-## [Unreleased]
+## [v5.1.0] - 2026-08-03
 
 - Added: Facebook MQTT/GraphQL WebSocket frame extraction for HD Reels URLs.
 - Changed: Facebook extraction now uses seven ranked layers and rescans after captured WebSocket media.

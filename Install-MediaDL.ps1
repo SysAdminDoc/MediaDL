@@ -9,7 +9,7 @@
     - Userscript for YouTube integration
 .NOTES
     Author: SysAdminDoc
-    Version: 5.0.0
+    Version: 5.1.0
     Repository: https://github.com/SysAdminDoc/MediaDL
 #>
 
@@ -40,7 +40,7 @@ $consolePtr = [Console.Window]::GetConsoleWindow()
 # CONFIGURATION
 # ============================================
 $script:AppName = "MediaDL"
-$script:AppVersion = "5.0.0"
+$script:AppVersion = "5.1.0"
 $script:InstallPath = "$env:LOCALAPPDATA\MediaDL"
 $script:YtDlpReleaseApiUrl = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 $script:FfmpegReleaseApiUrl = "https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases/latest"
@@ -540,7 +540,7 @@ Download-Image -Url $script:IconUrl -OutPath $iconPath | Out-Null
                     <TextBlock x:Name="txtSubtitle" Text="Download videos and audio from 1800+ sites" FontSize="14" Foreground="{StaticResource TextSecondary}" FontFamily="Segoe UI" Margin="0,4,0,0"/>
                 </StackPanel>
                 
-                <TextBlock Grid.Column="2" Text="v5.0.0" FontSize="12" Foreground="{StaticResource TextMuted}" VerticalAlignment="Top" FontFamily="Segoe UI Semibold"/>
+                <TextBlock Grid.Column="2" Text="v5.1.0" FontSize="12" Foreground="{StaticResource TextMuted}" VerticalAlignment="Top" FontFamily="Segoe UI Semibold"/>
             </Grid>
         </Border>
         
@@ -1940,7 +1940,7 @@ public static class MediaDLProcessControl {
 $PORT = 9751
 $MAX_CONCURRENT = 3
 $CLEANUP_MINUTES = 5
-$SERVER_VERSION = "5.0.0"
+$SERVER_VERSION = "5.1.0"
 
 $logFile = Join-Path $PSScriptRoot "server.log"
 function Write-Log {
