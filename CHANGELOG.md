@@ -41,3 +41,64 @@ All notable changes to MediaDL will be documented in this file.
 - Create test
 - Added: Add files via upload
 - Added: Add files via upload
+
+## Roadmap archive — 2026-08-10 — ROADMAP.md
+
+<details>
+<summary>Original roadmap snapshot</summary>
+
+```markdown
+# Roadmap
+
+Universal media downloader: userscript + background PowerShell HTTP server wrapping yt-dlp/ffmpeg for 1800+ sites. Roadmap focuses on extractor resilience, queue intelligence, and cross-browser reach.
+
+## Planned Features
+
+### Extractor Hardening
+
+### Download Queue
+
+### Format Control
+
+### Cross-Browser
+
+### Server Infrastructure
+
+## Competitive Research
+- **yt-dlp** — the engine; track breakage in supportedsites.md and ship yt-dlp pin updates within 24h.
+- **JDownloader 2** — reference for queue UX, captcha handling, and host plugin architecture.
+- **Video DownloadHelper** — best Firefox integration we don't match yet (context-menu + on-page pills).
+- **Cobalt.tools** — minimalist UX with excellent site coverage; lessons for the pill overlay simplicity.
+
+## Nice-to-Haves
+
+## Open-Source Research (Round 2)
+
+### Related OSS Projects
+- https://github.com/yt-dlp/yt-dlp — upstream engine, 1800+ sites, three release channels (stable/nightly/master)
+- https://github.com/jely2002/youtube-dl-gui — Tauri + Vue 3 + Rust, cross-platform, auto-update for app + yt-dlp
+- https://github.com/dsymbol/yt-dlp-gui — PySide6 cross-platform, GitHub Actions release pipeline
+- https://github.com/ErrorFlynn/ytdlp-interface — Nana C++ Windows GUI, libjpeg-turbo + libpng + bit7z
+- https://github.com/database64128/youtube-dl-wpf — WPF GUI, GPLv3, BYO-downloader pattern
+- https://github.com/kannagi0303/yt-dlp-gui — Windows GUI, presets
+- https://github.com/vokrob/yt-dlp-gui — desktop GUI
+- https://github.com/himanshuxd/HXD-yt-dlp-GUI — clipboard-triggered download workflow
+- https://github.com/JunkFood02/Seal — Android yt-dlp wrapper with Material You
+
+### Features to Borrow
+- Clipboard-watch mode that auto-queues a download when a supported URL is copied (HXD-yt-dlp-GUI) — big UX win for MediaDL users working across browser tabs
+- Auto-update both the wrapper and yt-dlp binary on launch (jely2002/youtube-dl-gui) — yt-dlp breaks weekly, stale binaries are MediaDL's #1 support burden
+- Smart queue balancing with per-host concurrency caps (jely2002) — avoids YouTube ratelimits when downloading playlists
+- Format matrix UI (click cells to pick webm/mkv/mp4 × audio/video) instead of dropdowns (HXD-yt-dlp-GUI)
+- Post-processing pipeline toggles: embed subtitles, embed thumbnail, write metadata JSON (jely2002) — already supported in yt-dlp CLI, surface in GUI
+- Release channel selector (stable / nightly / master) matching yt-dlp's three channels (yt-dlp docs)
+- BYO-downloader path config for users who want specific yt-dlp forks (database64128) — useful for custom extractors
+
+### Patterns & Architectures Worth Studying
+- Tauri + Rust backend wrapping the yt-dlp binary (jely2002) — 5MB installer vs Electron's 100MB, same UX — consider as v5 rewrite target if PowerShell UI hits limits
+- JSON-schema-backed preset format that can be shared between users (Axiom-style config) — lets MediaDL publish a preset library
+- Per-site extractor plugin manifest (yt-dlp `--extractor-args`) — expose as GUI dropdowns for sites with known quirks (Twitter auth, Instagram cookies)
+- GitHub Actions workflow with matrix builds (Windows/macOS/Linux) + auto-release (dsymbol/yt-dlp-gui) — template for MediaDL CI
+```
+
+</details>
